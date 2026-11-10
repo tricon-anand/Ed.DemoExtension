@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo Overlay Admin</title>
+<style>
+  :root { --bg:#f3f4f6; --card:#fff; --ink:#111827; --mute:#6b7280; --line:#e5e7eb; --brand:#2563eb; --bad:#dc2626; --good:#059669; --warn:#b45309; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:#1e293b; color:#fff; padding:10px 20px; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:16px; margin:0; flex:1; }
+  header a, header span { color:#cbd5e1; font-size:13px; }
+  header button { background:transparent; color:#fff; border-color:#64748b; }
+  #status { min-height:22px; padding:2px 20px; font-size:13px; }
+  #status.err { color:var(--bad); } #status.ok { color:var(--good); }
+  .layout { display:grid; grid-template-columns:240px 1fr; gap:16px; padding:0 20px 40px; align-items:start; }
+  @media (max-width:800px){ .layout { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0 0 10px; }
+  h3 { font-size:15px; margin:0 0 8px; }
+  input[type=text], input[type=password], select { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font:inherit; background:#fff; color:var(--ink); }
+  input[disabled], select[disabled] { background:#f3f4f6; color:var(--mute); }
+  button { padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; background:#fff; color:var(--ink); font:inherit; cursor:pointer; }
+  button:hover { background:#f3f4f6; }
+  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.primary:hover { background:#1d4ed8; }
+  button.danger { color:var(--bad); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; min-width:120px; }
+  .field { display:flex; flex-direction:column; gap:3px; }
+  .field label { font-size:12px; font-weight:600; color:var(--mute); }
+  ul.list { list-style:none; margin:0 0 12px; padding:0; }
+  ul.list li { padding:7px 10px; border-radius:6px; cursor:pointer; display:flex; justify-content:space-between; gap:8px; }
+  ul.list li:hover { background:#f3f4f6; }
+  ul.list li.sel { background:#eff6ff; color:#1d4ed8; font-weight:600; }
+  ul.list li small { color:var(--mute); font-weight:400; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:12px; color:var(--mute); padding:4px 6px; }
+  td { padding:4px 6px; vertical-align:middle; }
+  td input[type=text], td select { width:100%; }
+  tr.rule td { border-top:1px solid var(--line); }
+  .mono { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .tabs button.on { background:#eff6ff; border-color:var(--brand); color:#1d4ed8; font-weight:600; }
+  .miss { color:var(--warn); background:#fffbeb; border-radius:3px; padding:0 3px; }
+  .note { color:var(--mute); font-size:12px; margin-top:6px; }
+  .empty { color:var(--mute); padding:8px 0; }
+  .login { max-width:340px; margin:60px auto; }
+  .login .field { margin-bottom:10px; }
+  .login input { width:100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Demo Overlay Admin</h1>
+  <span id="who"></span>
+  <a href="/docs" target="_blank" rel="noopener">API docs</a>
+  <button id="logoutBtn" style="display:none">Log out</button>
+</header>
+<div id="status"></div>
+<div id="app"></div>
+
+<script>
+'use strict';
+
+// ---------- tiny helpers ----------
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) {
+    if (c == null || c === false) continue;
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+
+const $ = (id) => document.getElementById(id);
+let statusTimer = null;
+function flash(msg, bad) {
+  const el = $('status');
+  el.textContent = msg || '';
+  el.className = msg ? (bad ? 'err' : 'ok') : '';
+  clearTimeout(statusTimer);
+  if (msg && !bad) statusTimer = setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+// ---------- state ----------
+const S = {
+  token: store.get('adminToken'),
+  user: null,
+  scenarios: [],
+  sid: null,       // selected scenario id
+  rules: [],
+  profiles: [],
+  pid: null,       // selected profile id
+  vars: [],        // working copy of the selected profile's variables: [{k, v}]
+  profName: '',    // working copy of the selected profile's name
+};
+
+const canEdit = () => !!S.user && ['admin', 'editor'].includes(S.user.role);
+const canDelete = () => !!S.user && S.user.role === 'admin';
+const scenario = () => S.scenarios.find((s) => s.id === S.sid) || null;
+const profile = () => S.profiles.find((p) => p.id === S.pid) || null;
+
+// ---------- API ----------
+async function api(path, opt = {}) {
+  const headers = {};
+  if (S.token) headers.Authorization = 'Bearer ' + S.token;
+  let body;
+  if (opt.json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(opt.json); }
+  if (opt.form) body = new URLSearchParams(opt.form);
+  const res = await fetch(path, { method: opt.method || 'GET', headers, body });
+  if (res.status === 401 && path !== '/auth/login') {
+    logout();
+    throw new Error('Session expired. Please log in again.');
+  }
+  if (!res.ok) {
+    let d = '';
+    try { d = (await res.json()).detail; } catch (e) {}
+    if (Array.isArray(d)) d = d.map((x) => x.msg).join('; ');
+    throw new Error(d || 'Server error ' + res.status);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function run(fn) {
+  try { await fn(); } catch (e) { flash(e.message || String(e), true); }
+}
+
+// ---------- variables ----------
+function varsObject() {
+  const o = {};
+  S.vars.forEach((x) => { const k = x.k.trim(); if (k) o[k] = x.v; });
+  return o;
+}
+
+// ---------- auth ----------
+function logout() {
+  S.token = null; S.user = null; S.scenarios = []; S.sid = null; S.rules = []; S.profiles = []; S.pid = null;
+  store.del('adminToken');
+  renderAll();
+}
+
+async function afterLogin() {
+  S.user = await api('/auth/me');
+  await loadScenarios();
+  if (S.scenarios.length) await selectScenario(S.scenarios[0].id);
+  else renderAll();
+}
+
+// ---------- data loading ----------
+async function loadScenarios() {
+  S.scenarios = await api('/scenarios');
+}
+
+async function loadRules() { S.rules = await api(`/scenarios/${S.sid}/rules`); }
+
+async function loadProfiles(keepId) {
+  S.profiles = await api(`/scenarios/${S.sid}/profiles`);
+  const keep = S.profiles.find((p) => p.id === keepId);
+  setProfile(keep ? keep.id : S.profiles.length ? S.profiles[0].id : null);
+}
+
+function setProfile(id) {
+  S.pid = id;
+  const p = profile();
+  S.vars = p ? Object.entries(p.variables || {}).map(([k, v]) => ({ k, v })) : [];
+  S.profName = p ? p.name : '';
+}
+
+async function refreshScenario() {
+  const fresh = await api(`/scenarios/${S.sid}`);
+  const i = S.scenarios.findIndex((s) => s.id === fresh.id);
+  if (i >= 0) S.scenarios[i] = fresh;
+}
+
+async function selectScenario(id) {
+  S.sid = id;
+  await Promise.all([loadRules(), loadProfiles()]);
+  renderAll();
+}
+
+// ---------- rendering ----------
+function renderAll() {
+  const app = $('app');
+  app.replaceChildren();
+  $('who').textContent = S.user ? `${S.user.email} (${S.user.role})` : '';
+  $('logoutBtn').style.display = S.user ? '' : 'none';
+  if (!S.user) { app.append(loginView()); return; }
+  app.append(h('div', { class: 'layout' }, sidebar(), h('div', { id: 'main' })));
+  renderMain();
+}
+
+function loginView() {
+  let mode = 'login';                 // login | register | invite
+  let canRegister = false;
+  const box = h('div', { class: 'card login' });
+
+  const field = (label, input) => h('div', { class: 'field' }, h('label', null, label), input);
+  const enter = (input, go) => input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  const finish = async (t) => {
+    S.token = t.access_token;
+    store.set('adminToken', S.token);
+    flash('');
+    await afterLogin();
+  };
+
+  function draw() {
+    box.replaceChildren();
+    const tabs = h('div', { class: 'tabs' },
+      h('button', { class: mode === 'login' ? 'on' : '', onclick: () => { mode = 'login'; draw(); } }, 'Log in'),
+      h('button', { class: mode === 'register' ? 'on' : '', onclick: () => { mode = 'register'; draw(); } }, 'Create account'),
+      h('button', { class: mode === 'invite' ? 'on' : '', onclick: () => { mode = 'invite'; draw(); } }, 'I have an invitation'));
+    box.append(tabs);
+
+    if (mode === 'login') {
+      const email = h('input', { type: 'text', placeholder: 'you@example.com', autocomplete: 'username' });
+      const pass = h('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
+      const go = () => run(async () => {
+        flash('Logging in...');
+        await finish(await api('/auth/login', { method: 'POST', form: { username: email.value.trim(), password: pass.value } }));
+      });
+      enter(pass, go);
+      box.append(field('Email', email), field('Password', pass), h('button', { class: 'primary', onclick: go }, 'Log in'));
+    } else if (mode === 'register') {
+      if (!canRegister) {
+        box.append(h('div', { class: 'note' }, 'New accounts are not open on this server. Ask an existing admin for an invitation (use the "I have an invitation" tab), or the server owner can allow open sign-up with ALLOW_OPEN_REGISTRATION=true.'));
+        return;
+      }
+      const org = h('input', { type: 'text', placeholder: 'Company or team name', autocomplete: 'organization' });
+      const email = h('input', { type: 'text', placeholder: 'you@example.com', autocomplete: 'username' });
+      const pass = h('input', { type: 'password', placeholder: 'At least 8 characters', autocomplete: 'new-password' });
+      const again = h('input', { type: 'password', placeholder: 'Repeat the password', autocomplete: 'new-password' });
+      const go = () => run(async () => {
+        if (!org.value.trim()) throw new Error('Enter a company or team name');
+        if (pass.value.length < 8) throw new Error('The password needs at least 8 characters');
+        if (pass.value !== again.value) throw new Error('The two passwords are different');
+        flash('Creating account...');
+        await finish(await api('/auth/register', { method: 'POST', json: { org_name: org.value.trim(), email: email.value.trim(), password: pass.value } }));
+      });
+      enter(again, go);
+      box.append(field('Company or team', org), field('Email', email), field('Password', pass), field('Repeat password', again),
+        h('button', { class: 'primary', onclick: go }, 'Create admin account'),
+        h('div', { class: 'note' }, 'You become the admin of a new, separate workspace. Nobody else can see its scenarios.'));
+    } else {
+      const code = h('input', { type: 'text', placeholder: 'Invitation code', class: 'mono' });
+      const pass = h('input', { type: 'password', placeholder: 'Choose a password (8+ characters)', autocomplete: 'new-password' });
+      const go = () => run(async () => {
+        if (pass.value.length < 8) throw new Error('The password needs at least 8 characters');
+        flash('Joining...');
+        await finish(await api('/auth/accept-invite', { method: 'POST', json: { token: code.value.trim(), password: pass.value } }));
+      });
+      enter(pass, go);
+      box.append(field('Invitation code', code), field('Password', pass), h('button', { class: 'primary', onclick: go }, 'Join'),
+        h('div', { class: 'note' }, 'An admin creates the code under More tools, then Team. It works once and expires after 7 days. You join with the role the admin chose.'));
+    }
+  }
+
+  draw();
+  api('/auth/options').then((o) => { canRegister = !!o.open_registration; if (mode === 'register') draw(); }).catch(() => {});
+  return box;
+}
+
+function fillScList(list) {
+  list.replaceChildren();
+  if (!S.scenarios.length) list.append(h('li', { class: 'empty' }, 'No scenarios yet'));
+  S.scenarios.forEach((s) => {
+    list.append(h('li', {
+      class: s.id === S.sid ? 'sel' : '',
+      onclick: () => run(() => selectScenario(s.id)),
+    }, h('span', null, s.name), h('small', null, 'v' + s.version)));
+  });
+}
+
+function sidebar() {
+  const list = h('ul', { class: 'list', id: 'scList' });
+  fillScList(list);
+  const box = h('div', { class: 'card' }, h('h2', null, 'Scenarios'), list);
+
+  if (canEdit()) {
+    const name = h('input', { type: 'text', placeholder: 'Scenario name' });
+    const host = h('input', { type: 'text', placeholder: 'App host, e.g. app.acme.com' });
+    box.append(
+      h('h2', null, 'New scenario'),
+      h('div', { class: 'field' }, name),
+      h('div', { class: 'field', style: 'margin-top:6px' }, host),
+      h('div', { style: 'margin-top:8px' }, h('button', {
+        class: 'primary',
+        onclick: () => run(async () => {
+          if (!name.value.trim()) throw new Error('Enter a scenario name');
+          const sc = await api('/scenarios', { method: 'POST', json: { name: name.value.trim(), target_host: host.value.trim() } });
+          await loadScenarios();
+          await selectScenario(sc.id);
+          flash('Scenario created');
+        }),
+      }, 'Create')),
+      h('div', { class: 'note' }, 'The host must match the page address exactly: no https:// and no port.'));
+  }
+  return box;
+}
+
+function renderMain() {
+  const main = $('main');
+  main.replaceChildren();
+  const sc = scenario();
+  if (!sc) { main.append(h('div', { class: 'card empty' }, 'Select or create a scenario.')); return; }
+  main.append(
+    h('div', { id: 'scBox' }), h('div', { id: 'rulesBox' }),
+    h('div', { id: 'profBox' }), h('div', { id: 'prevBox' }), h('div', { id: 'opsBox' }));
+  renderScenarioBox(); renderRules(); renderProfiles(); renderPreview();
+}
+
+function renderScenarioBox() {
+  const sc = scenario();
+  const scList = $('scList');
+  if (scList) fillScList(scList);          // keep the version chips in the sidebar current
+  const box = $('scBox');
+  box.replaceChildren();
+  const ro = !canEdit();
+  const name = h('input', { type: 'text', value: sc.name, disabled: ro, class: 'grow' });
+  const host = h('input', { type: 'text', value: sc.target_host, disabled: ro, class: 'grow' });
+  const row = h('div', { class: 'row' },
+    h('div', { class: 'field grow' }, h('label', null, 'Name'), name),
+    h('div', { class: 'field grow' }, h('label', null, 'App host'), host));
+  const actions = h('div', { class: 'row', style: 'margin-top:10px' });
+  if (canEdit()) {
+    actions.append(
+      h('button', {
+        class: 'primary',
+        onclick: () => run(async () => {
+          if (!name.value.trim()) throw new Error('Name cannot be empty');
+          await api(`/scenarios/${sc.id}`, { method: 'PUT', json: { name: name.value.trim(), target_host: host.value.trim() } });
+          await loadScenarios();
+          renderAll();
+          flash('Scenario saved');
+        }),
+      }, 'Save scenario'),
+      h('button', { onclick: () => run(() => duplicate(sc)) }, 'Duplicate'));
+  }
+  if (canDelete()) {
+    actions.append(h('button', {
+      class: 'danger',
+      onclick: () => run(async () => {
+        if (!confirm(`Delete scenario "${sc.name}" with all its rules and profiles?`)) return;
+        await api(`/scenarios/${sc.id}`, { method: 'DELETE' });
+        await loadScenarios();
+        S.sid = null; S.rules = []; S.profiles = []; S.pid = null;
+        if (S.scenarios.length) await selectScenario(S.scenarios[0].id); else renderAll();
+        flash('Scenario deleted');
+      }),
+    }, 'Delete'));
+  }
+  box.append(h('div', { class: 'card' },
+    h('h2', null, `Scenario · version ${sc.version}`), row, actions,
+    ro ? h('div', { class: 'note' }, 'Your role is read-only. Ask an admin or editor to make changes.') : null));
+  renderOps();          // history and activity change with every save, so refresh them too
+}
+
+async function duplicate(sc) {
+  if (!confirm(`Duplicate "${sc.name}" with its rules and profiles?`)) return;
+  flash('Duplicating...');
+  const copy = await api('/scenarios', { method: 'POST', json: { name: sc.name + ' (copy)', target_host: sc.target_host } });
+  for (const r of S.rules) {
+    await api(`/scenarios/${copy.id}/rules`, { method: 'POST', json: { selector: r.selector, type: r.type, value: r.value, host: r.host || '', page: r.page || '', disabled: r.disabled } });
+  }
+  for (const p of S.profiles) {
+    await api(`/scenarios/${copy.id}/profiles`, { method: 'POST', json: { name: p.name, variables: p.variables } });
+  }
+  await loadScenarios();
+  await selectScenario(copy.id);
+  flash('Duplicated as "' + copy.name + '"');
+}
+
+// ----- rules -----
+function ruleRow(r) {
+  const ro = !canEdit();
+  const on = h('input', { type: 'checkbox', checked: !r.disabled, disabled: ro, title: 'Rule enabled' });
+  const type = h('select', { disabled: ro },
+    ['text', 'hide', 'image', 'html', 'api'].map((t) => h('option', { value: t, selected: t === r.type }, t)));
+  const sel = h('input', { type: 'text', class: 'mono', value: r.selector, disabled: ro });
+  const val = h('input', { type: 'text', value: r.value, disabled: ro || r.type === 'hide' });
+  const host = h('input', { type: 'text', class: 'mono', value: r.host || '', disabled: ro, placeholder: 'scenario host' });
+  const page = h('input', { type: 'text', class: 'mono', value: r.page || '', disabled: ro, placeholder: 'every page' });
+  type.addEventListener('change', () => { val.disabled = type.value === 'hide'; });
+  const cells = [h('td', { style: 'width:34px' }, on), h('td', { style: 'width:90px' }, type), h('td', { style: 'width:26%' }, sel), h('td', null, val), h('td', { style: 'width:13%' }, host), h('td', { style: 'width:13%' }, page)];
+  if (!ro) {
+    cells.push(h('td', { style: 'white-space:nowrap' },
+      h('button', {
+        onclick: () => run(async () => {
+          if (!sel.value.trim()) throw new Error('Selector cannot be empty');
+          await api(`/rules/${r.id}`, { method: 'PUT', json: {
+            selector: sel.value.trim(), type: type.value, value: type.value === 'hide' ? '' : val.value,
+            host: host.value.trim(), page: page.value.trim(), disabled: !on.checked, position: r.position } });
+          await Promise.all([loadRules(), refreshScenario()]);
+          renderScenarioBox(); renderRules(); renderPreview();
+          flash('Rule saved');
+        }),
+      }, 'Save'), ' ',
+      h('button', {
+        class: 'danger',
+        onclick: () => run(async () => {
+          if (!confirm('Delete this rule?')) return;
+          await api(`/rules/${r.id}`, { method: 'DELETE' });
+          await Promise.all([loadRules(), refreshScenario()]);
+          renderScenarioBox(); renderRules(); renderPreview();
+          flash('Rule deleted');
+        }),
+      }, 'Delete')));
+  }
+  return h('tr', { class: 'rule' }, cells);
+}
+
+function renderRules() {
+  const box = $('rulesBox');
+  box.replaceChildren();
+  const card = h('div', { class: 'card' }, h('h2', null, 'Rules · what gets replaced'));
+  if (!S.rules.length) card.append(h('div', { class: 'empty' }, 'No rules yet. Add one below, or pick elements with the extension.'));
+  else {
+    card.append(h('table', null,
+      h('thead', null, h('tr', null, h('th', null, 'On'), h('th', null, 'Type'), h('th', null, 'CSS selector or API URL pattern'), h('th', null, 'New value (use {{variables}})'), h('th', null, 'Host (optional)'), h('th', null, 'Page (optional)'), canEdit() ? h('th') : null)),
+      h('tbody', null, S.rules.map(ruleRow))));
+  }
+  if (canEdit()) {
+    const type = h('select', null, ['text', 'hide', 'image', 'html', 'api'].map((t) => h('option', { value: t }, t)));
+    const sel = h('input', { type: 'text', class: 'mono grow', placeholder: '#company-name' });
+    const val = h('input', { type: 'text', class: 'grow', placeholder: '{{company}}' });
+    type.addEventListener('change', () => { val.disabled = type.value === 'hide'; });
+    card.append(h('div', { class: 'row', style: 'margin-top:12px' }, type, sel, val, h('button', {
+      class: 'primary',
+      onclick: () => run(async () => {
+        if (!sel.value.trim()) throw new Error('Enter a CSS selector');
+        await api(`/scenarios/${S.sid}/rules`, { method: 'POST', json: { selector: sel.value.trim(), type: type.value, value: type.value === 'hide' ? '' : val.value } });
+        await Promise.all([loadRules(), refreshScenario()]);
+        renderScenarioBox(); renderRules(); renderPreview();
+        flash('Rule added');
+      }),
+    }, 'Add rule')));
+  }
+  card.append(h('div', { class: 'note' },
+    'API rule (type "api"): the selector is a URL pattern such as */api/dashboard* (optionally starting with GET or POST). ',
+    'The value is a JSON list of edits, for example [{"path":"kpis.revenue","value":"{{revenue}}"},{"path":"monthly[*].revenue","value":"95000"}]. ',
+    'The page needs a reload to pick up API changes. ',
+    'Host (optional): leave empty to use the scenario host. Use a list ("app.acme.com, reports.acme.com") or a wildcard ("*.acme.com") to also change iframes and other sites. ',
+    'Page (optional): limit a rule to some pages of the app, for example /patients* or /reports/* (matched against the path, ?query and #hash). Empty = every page. ',
+    'Shadow DOM: join selectors with >>>, for example my-widget >>> .total.'));
+  box.append(card);
+}
+
+// ----- profiles -----
+function renderProfiles() {
+  const box = $('profBox');
+  box.replaceChildren();
+  const ro = !canEdit();
+  const card = h('div', { class: 'card' }, h('h2', null, 'Profiles · country or persona'));
+
+  const tabs = h('div', { class: 'tabs' });
+  S.profiles.forEach((p) => {
+    tabs.append(h('button', {
+      class: p.id === S.pid ? 'on' : '',
+      onclick: () => { setProfile(p.id); renderProfiles(); renderPreview(); },
+    }, p.name));
+  });
+  if (!S.profiles.length) tabs.append(h('span', { class: 'empty' }, 'No profiles yet.'));
+  card.append(tabs);
+
+  const p = profile();
+  if (p) {
+    const nameIn = h('input', { type: 'text', value: S.profName, disabled: ro, class: 'grow' });
+    nameIn.addEventListener('input', () => { S.profName = nameIn.value; });
+    card.append(h('div', { class: 'field', style: 'max-width:320px;margin-bottom:10px' }, h('label', null, 'Profile name'), nameIn));
+
+    const tbody = h('tbody');
+    S.vars.forEach((x, i) => {
+      const k = h('input', { type: 'text', class: 'mono', value: x.k, disabled: ro, placeholder: 'name' });
+      const v = h('input', { type: 'text', value: x.v, disabled: ro, placeholder: 'value' });
+      k.addEventListener('input', () => { x.k = k.value; renderPreview(); });
+      v.addEventListener('input', () => { x.v = v.value; renderPreview(); });
+      tbody.append(h('tr', null, h('td', { style: 'width:34%' }, k), h('td', null, v),
+        ro ? null : h('td', { style: 'width:40px' }, h('button', {
+          class: 'danger', title: 'Remove variable',
+          onclick: () => { S.vars.splice(i, 1); renderProfiles(); renderPreview(); },
+        }, '×'))));
+    });
+    card.append(h('table', null, h('thead', null, h('tr', null, h('th', null, 'Variable'), h('th', null, 'Value'), ro ? null : h('th'))), tbody));
+    if (!S.vars.length) card.append(h('div', { class: 'empty' }, 'No variables in this profile.'));
+    card.append(h('div', { class: 'note' },
+      'Formatting: set _locale (en_US, en_GB, en_IN, de_DE, fr_FR) and _currency (USD, GBP, INR, EUR). ',
+      'Then write {{revenue | currency}}, {{count | number}}, {{growth | percent}} or {{when | date}} in a rule. ',
+      'Type raw values (1240000, 12.5, 2026-11-02) and the page formats them for the country.'));
+
+    if (!ro) {
+      card.append(h('div', { class: 'row', style: 'margin-top:10px' },
+        h('button', { onclick: () => { S.vars.push({ k: '', v: '' }); renderProfiles(); } }, 'Add variable'),
+        h('button', {
+          onclick: () => {
+            const have = new Set(S.vars.map((x) => x.k.trim()));
+            if (!have.has('_locale')) S.vars.push({ k: '_locale', v: 'en_US' });
+            if (!have.has('_currency')) S.vars.push({ k: '_currency', v: 'USD' });
+            renderProfiles(); renderPreview();
+          },
+        }, 'Add locale and currency'),
+        h('button', {
+          class: 'primary',
+          onclick: () => run(async () => {
+            if (!S.profName.trim()) throw new Error('Profile name cannot be empty');
+            await api(`/profiles/${p.id}`, { method: 'PUT', json: { name: S.profName.trim(), variables: varsObject() } });
+            await Promise.all([loadProfiles(p.id), refreshScenario()]);
+            renderScenarioBox(); renderProfiles(); renderPreview();
+            flash('Profile saved');
+          }),
+        }, 'Save profile'),
+        h('button', {
+          title: 'Copy this state\'s data under a new name, then edit the copy',
+          onclick: () => run(async () => {
+            const name = (prompt(`Save "${p.name}" as a new state. Name (for example Texas, California):`) || '').trim();
+            if (!name) return;
+            if (S.profiles.some((x) => x.name === name)) throw new Error(`A profile named "${name}" already exists`);
+            const created = await api(`/scenarios/${S.sid}/profiles`, { method: 'POST', json: { name, variables: varsObject() } });
+            await Promise.all([loadProfiles(created.id), refreshScenario()]);
+            renderScenarioBox(); renderProfiles(); renderPreview();
+            flash(`Saved as "${name}". Edit its values and press Save profile.`);
+          }),
+        }, 'Save as new state...'),
+        h('button', {
+          class: 'danger',
+          onclick: () => run(async () => {
+            if (!confirm(`Delete profile "${p.name}"?`)) return;
+            await api(`/profiles/${p.id}`, { method: 'DELETE' });
+            await Promise.all([loadProfiles(), refreshScenario()]);
+            renderScenarioBox(); renderProfiles(); renderPreview();
+            flash('Profile deleted');
+          }),
+        }, 'Delete profile')));
+    }
+  }
+
+  if (!ro) {
+    const nn = h('input', { type: 'text', placeholder: 'New profile name, e.g. Texas' });
+    const copy = h('input', { type: 'checkbox', checked: true, id: 'copyVars' });
+    card.append(h('div', { class: 'row', style: 'margin-top:14px;padding-top:12px;border-top:1px solid var(--line)' },
+      nn, h('label', { for: 'copyVars' }, copy, ' copy current variables'),
+      h('button', {
+        onclick: () => run(async () => {
+          const name = nn.value.trim();
+          if (!name) throw new Error('Enter a profile name');
+          const variables = copy.checked ? varsObject() : {};
+          const created = await api(`/scenarios/${S.sid}/profiles`, { method: 'POST', json: { name, variables } });
+          await Promise.all([loadProfiles(created.id), refreshScenario()]);
+          renderScenarioBox(); renderProfiles(); renderPreview();
+          flash('Profile added');
+        }),
+      }, 'Add profile')));
+  }
+  box.append(card);
+}
+
+// ----- preview -----
+// The server does the resolving (same code as the bundle), so filters like
+// {{revenue | currency}} look exactly like they will in the demo.
+let previewSeq = 0, previewTimer = null, previewCells = new Map();
+S.preview = {};
+
+function fillResult(td, r, text) {
+  td.replaceChildren();
+  if (r.disabled) { td.append(h('span', { class: 'note' }, '(rule disabled)')); return 0; }
+  if (r.type === 'hide') { td.append(h('span', { class: 'note' }, '(element hidden)')); return 0; }
+  if (text == null) { td.append(h('span', { class: 'note' }, '...')); return 0; }
+  let bad = 0;
+  text.split(/(\{\{[^}]*\}\})/).forEach((part) => {
+    if (!part) return;
+    if (/^\{\{[^}]*\}\}$/.test(part)) { bad++; td.append(h('span', { class: 'miss', title: 'Not defined for this profile, or an unknown filter' }, part)); }
+    else td.append(part);
+  });
+  return bad;
+}
+
+function renderPreview() {
+  const box = $('prevBox');
+  box.replaceChildren();
+  previewCells = new Map();
+  const p = profile();
+  const card = h('div', { class: 'card' }, h('h2', null, 'Preview · saved rules with the variables above'));
+  if (!p) { card.append(h('div', { class: 'empty' }, 'Add a profile to see a preview.')); box.append(card); return; }
+  if (!S.rules.length) { card.append(h('div', { class: 'empty' }, 'No rules to preview.')); box.append(card); return; }
+  const tbody = h('tbody');
+  S.rules.forEach((r) => {
+    const td = h('td');
+    previewCells.set(r.id, td);
+    tbody.append(h('tr', { class: 'rule' }, h('td', { class: 'mono', style: 'width:30%' }, r.selector), td));
+  });
+  const warn = h('div', { class: 'note', style: 'color:var(--warn)' });
+  const locWarn = h('div', { class: 'note', style: 'color:var(--warn)' });
+  card.append(h('table', null, h('thead', null, h('tr', null, h('th', null, 'Selector'), h('th', null, 'Result on the page'))), tbody), warn, locWarn);
+  box.append(card);
+
+  const paint = () => {
+    let bad = 0;
+    S.rules.forEach((r) => { bad += fillResult(previewCells.get(r.id), r, S.preview[r.id]); });
+    const vars = varsObject();
+    const usesFilter = S.rules.some((r) => !r.disabled && /\{\{[^}]*\|\s*(number|currency|percent|date)/.test(r.value));
+    const missing = ['_locale', '_currency'].filter((k) => !String(vars[k] || '').trim());
+    locWarn.textContent = usesFilter && missing.length
+      ? `This scenario formats numbers or currency, but this profile has no value for ${missing.join(' and ')}. Numbers will use US formatting and $. Use "Add locale and currency".`
+      : '';
+    warn.textContent = bad ? `${bad} placeholder(s) are highlighted: the variable is missing in this profile, or the filter name is unknown.` : '';
+  };
+  paint();
+
+  const seq = ++previewSeq;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    try {
+      const out = await api(`/scenarios/${S.sid}/preview`, { method: 'POST', json: { variables: varsObject() } });
+      if (seq !== previewSeq) return;               // a newer render replaced this one
+      S.preview = {};
+      out.forEach((o) => { S.preview[o.id] = o.result; });
+      paint();
+    } catch (e) { if (seq === previewSeq) flash(e.message || String(e), true); }
+  }, 250);
+}
+
+// ----- history, activity, templates, team, AI assistant -----
+S.opsTab = 'history';
+S.run = null;        // last AI proposal
+
+function table(head, rows) {
+  return h('table', null, h('thead', null, h('tr', null, head.map((x) => h('th', null, x)))),
+    h('tbody', null, rows.map((r) => h('tr', { class: 'rule' }, r.map((c) => h('td', null, c))))));
+}
+const when = (iso) => new Date(iso).toLocaleString();
+
+async function panelHistory(body) {
+  const rows = await api(`/scenarios/${S.sid}/history`);
+  body.append(h('div', { class: 'note', style: 'margin:0 0 8px' }, 'Every change saves a copy. Restoring makes a new version, so you can undo a restore too.'),
+    table(['Version', 'When', 'Who', 'Change', 'Rules / profiles', ''], rows.map((x, i) => [
+      'v' + x.version, when(x.created_at), x.created_by, x.note, `${x.rules} / ${x.profiles}`,
+      canEdit() && i > 0 ? h('button', { onclick: () => run(async () => {
+        if (!confirm(`Restore version ${x.version}? Current rules and profiles will be replaced (you can restore back).`)) return;
+        await api(`/scenarios/${S.sid}/history/${x.id}/restore`, { method: 'POST' });
+        await selectScenario(S.sid); flash('Restored');
+      }) }, 'Restore') : (i === 0 ? h('span', { class: 'note' }, 'current') : null)])));
+}
+
+async function panelActivity(body) {
+  if (!canEdit()) { body.append(h('div', { class: 'empty' }, 'Only admins and editors can see activity.')); return; }
+  const [log, an] = await Promise.all([api(`/audit?scenario_id=${S.sid}&limit=50`), api('/analytics?days=30')]);
+  const top = (list) => list.length ? list.map((x) => `${x.name} (${x.count})`).join(', ') : 'nothing yet';
+  body.append(
+    h('div', { class: 'note', style: 'margin:0 0 8px' }, `Last 30 days, whole organization: ${an.total} events.`),
+    h('div', null, h('b', null, 'Most used scenarios: '), top(an.scenarios)),
+    h('div', null, h('b', null, 'Most active people: '), top(an.users)),
+    h('div', null, h('b', null, 'Profiles shown: '), top(an.profiles)),
+    h('h2', { style: 'margin-top:14px' }, 'Change log for this scenario'),
+    log.length ? table(['When', 'Who', 'Action', 'Detail'], log.map((a) => [when(a.at), a.user, a.action, a.detail]))
+      : h('div', { class: 'empty' }, 'No changes recorded.'));
+}
+
+async function panelTemplates(body) {
+  const list = await api('/templates');
+  const key = h('select', null, list.map((t) => h('option', { value: t.key }, `${t.name} (${t.profiles.length} profiles)`)));
+  const host = h('input', { type: 'text', placeholder: 'App host (optional)', class: 'grow' });
+  const file = h('input', { type: 'file', accept: '.json,application/json' });
+  body.append(
+    h('div', { class: 'note', style: 'margin:0 0 8px' }, 'A template creates a new scenario with ready-made profiles for several countries. Its example rules are switched off: replace the selectors with ones from your own app.'),
+    canEdit() ? h('div', { class: 'row' }, key, host, h('button', { class: 'primary', onclick: () => run(async () => {
+      const sc = await api('/scenarios/from-template', { method: 'POST', json: { key: key.value, target_host: host.value.trim() } });
+      await loadScenarios(); await selectScenario(sc.id); flash('Scenario created from template');
+    }) }, 'Create from template')) : h('div', { class: 'empty' }, 'Only admins and editors can create scenarios.'),
+    h('h2', { style: 'margin-top:14px' }, 'Export / import'),
+    h('div', { class: 'row' },
+      h('button', { onclick: () => run(async () => {
+        const data = await api(`/scenarios/${S.sid}/export`);
+        const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })), download: (scenario().name || 'scenario') + '.json' });
+        document.body.append(a); a.click(); a.remove();
+      }) }, 'Export this scenario (JSON)'),
+      canEdit() ? [file, h('button', { onclick: () => run(async () => {
+        if (!file.files[0]) throw new Error('Choose a JSON file first');
+        let data; try { data = JSON.parse(await file.files[0].text()); } catch (e) { throw new Error('That file is not valid JSON'); }
+        const sc = await api('/scenarios/import', { method: 'POST', json: { data } });
+        await loadScenarios(); await selectScenario(sc.id); flash('Imported');
+      }) }, 'Import as new scenario')] : null));
+}
+
+async function panelTeam(body) {
+  if (!canDelete()) { body.append(h('div', { class: 'empty' }, 'Only admins manage the team.')); return; }
+  const users = await api('/auth/users');
+  const email = h('input', { type: 'text', placeholder: 'colleague@example.com', class: 'grow' });
+  const role = h('select', null, ['presenter', 'editor', 'admin'].map((r) => h('option', { value: r }, r)));
+  const out = h('div', { class: 'note' });
+  body.append(
+    table(['Email', 'Role'], users.map((u) => [u.email, u.role])),
+    h('h2', { style: 'margin-top:14px' }, 'Invite someone'),
+    h('div', { class: 'row' }, email, role, h('button', { class: 'primary', onclick: () => run(async () => {
+      const r = await api('/auth/invitations', { method: 'POST', json: { email: email.value.trim(), role: role.value } });
+      out.replaceChildren('Send this code to ' + r.email + ' (shown once, valid 7 days): ', h('code', { class: 'mono' }, r.token),
+        h('br'), 'They set their password with POST /auth/accept-invite on the API docs page.');
+    }) }, 'Create invitation')), out);
+}
+
+async function panelAI(body) {
+  const st = await api('/agent/status');
+  if (!canEdit()) { body.append(h('div', { class: 'empty' }, 'Only admins and editors can use the assistant.')); return; }
+  body.append(h('div', { class: 'note', style: 'margin:0 0 8px' },
+    'Describe the demo. In the extension popup choose "Scan page for AI" first and paste the result here, so the assistant only uses selectors that exist on your page. It proposes rules and profiles; nothing changes until you press Apply.'));
+  if (st.available) body.append(h('div', { class: 'note' }, `Using ${st.provider} (${st.model}), key ending ${st.key_hint || '?'}.`));
+  if (st.env_overrides_file && st.env_overrides_file.length) body.append(h('div', { class: 'note', style: 'color:var(--warn)' },
+    `A value for ${st.env_overrides_file.join(', ')} is already set in the terminal that started the server, so the different value in .env is ignored. In that terminal run: Remove-Item Env:${st.env_overrides_file[0]} and restart the server.`));
+  if (!st.available) body.append(h('div', { class: 'note', style: 'color:var(--warn)' }, 'The server has no ANTHROPIC_API_KEY, so the assistant is switched off. Set it and restart the server.'));
+  const brief = h('textarea', { rows: 3, style: 'width:100%', placeholder: 'e.g. A private bank dashboard for a prospect in Mumbai. Wealth of about 2 billion INR, relationship manager Priya Sharma, 3 regional profiles.' });
+  const snap = h('textarea', { rows: 4, style: 'width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px', placeholder: 'Paste the page scan JSON from the extension (optional for API-only rules)' });
+  const research = h('input', { type: 'checkbox' });
+  const result = h('div', { style: 'margin-top:10px' });
+  const show = (r) => {
+    S.run = r;
+    result.replaceChildren();
+    const p = r.proposal;
+    result.append(h('h2', null, `Proposal${p.complete ? '' : ' (incomplete: the assistant did not finish)'} · ${r.steps} step(s)`),
+      p.summary ? h('div', { class: 'note' }, p.summary) : null,
+      table(['Selector', 'Type', 'Value', 'Why'], p.rules.map((x) => [h('span', { class: 'mono' }, x.selector), x.type, x.value, x.reason])),
+      table(['Profile', 'Variables'], p.profiles.map((x) => [x.name, Object.entries(x.variables).map(([k, v]) => `${k}=${v}`).join('; ')])),
+      p.complete ? h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'primary', onclick: () => run(async () => {
+        const a = await api(`/agent/runs/${r.run_id}/apply`, { method: 'POST' });
+        await selectScenario(S.sid); flash(`Applied: ${a.rules_added} rules, ${a.profiles_added} profiles`);
+      }) }, 'Apply to this scenario')) : null);
+  };
+  body.append(h('div', { class: 'field' }, h('label', null, 'What should the demo show?'), brief),
+    h('div', { class: 'field', style: 'margin-top:8px' }, h('label', null, 'Page scan'), snap),
+    h('label', { class: 'row', style: 'margin-top:8px' }, research, 'Research the prospect on the web first (public company facts only)'),
+    h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { class: 'primary', disabled: !st.available, onclick: () => run(async () => {
+      let snapshot = [];
+      if (snap.value.trim()) { try { snapshot = JSON.parse(snap.value); } catch (e) { throw new Error('The page scan is not valid JSON'); } }
+      flash('Asking the assistant... this can take a minute');
+      show(await api(`/agent/scenarios/${S.sid}/build`, { method: 'POST', json: { brief: brief.value, snapshot, research: research.checked } }));
+      flash('Proposal ready: review it below');
+    }) }, 'Build proposal')), result);
+}
+
+function renderOps() {
+  const box = $('opsBox');
+  if (!box) return;
+  box.replaceChildren();
+  const tabs = [['history', 'History', panelHistory], ['activity', 'Activity', panelActivity],
+    ['templates', 'Templates & import', panelTemplates], ['team', 'Team', panelTeam], ['ai', 'AI assistant', panelAI]];
+  const body = h('div');
+  const bar = h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('button', {
+    class: S.opsTab === k ? 'on' : '', onclick: () => { S.opsTab = k; renderOps(); } }, label)));
+  box.append(h('div', { class: 'card' }, h('h2', null, 'More tools'), bar, body));
+  const fn = tabs.find((t) => t[0] === S.opsTab)[2];
+  fn(body).catch((e) => body.append(h('div', { class: 'note', style: 'color:var(--bad)' }, e.message || String(e))));
+}
+
+// ---------- start ----------
+$('logoutBtn').addEventListener('click', logout);
+(async function init() {
+  if (!S.token) { renderAll(); return; }
+  try { await afterLogin(); } catch (e) { logout(); }
+})();
+</script>
+</body>
+</html>

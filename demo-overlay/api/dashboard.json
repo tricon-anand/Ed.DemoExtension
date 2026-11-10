@@ -1,0 +1,12 @@
+{
+  "company": "Acme Corp",
+  "kpis": { "revenue": 1240000, "customers": 3482 },
+  "monthly": [
+    { "month": "Jan", "revenue": 80000 }, { "month": "Feb", "revenue": 95000 },
+    { "month": "Mar", "revenue": 110000 }, { "month": "Apr", "revenue": 102000 },
+    { "month": "May", "revenue": 118000 }, { "month": "Jun", "revenue": 125000 },
+    { "month": "Jul", "revenue": 131000 }, { "month": "Aug", "revenue": 127000 },
+    { "month": "Sep", "revenue": 140000 }, { "month": "Oct", "revenue": 152000 },
+    { "month": "Nov", "revenue": 149000 }, { "month": "Dec", "revenue": 167000 }
+  ]
+}

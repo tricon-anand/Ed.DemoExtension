@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Analytics (test app)</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f3f4f6; margin: 0; }
+  header { background: #1e293b; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  #company-name { font-weight: 700; font-size: 18px; }
+  main { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+  #beta-banner { background: #fef3c7; border: 1px solid #f59e0b; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .label { color: #6b7280; font-size: 13px; }
+  .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  img.avatar { width: 40px; height: 40px; border-radius: 50%; }
+  .user { display: flex; gap: 10px; align-items: center; }
+</style>
+</head>
+<body>
+  <header>
+    <span id="company-name">Acme Corp</span>
+    <div class="user">
+      <span data-testid="welcome">Welcome back, Sarah</span>
+      <img class="avatar" id="avatar" alt="avatar" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><rect width='40' height='40' fill='%2394a3b8'/></svg>">
+    </div>
+  </header>
+  <main>
+    <div id="beta-banner">This is a beta build - some numbers are placeholders.</div>
+    <div class="cards">
+      <div class="card"><div class="label">Revenue (YTD)</div><div class="value" id="revenue">$1,240,000</div></div>
+      <div class="card"><div class="label">Active customers</div><div class="value" id="customers">3,482</div></div>
+    </div>
+  </main>
+</body>
+</html>

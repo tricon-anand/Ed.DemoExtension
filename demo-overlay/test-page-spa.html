@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Single-page app test</title>
+<style>body{font:15px system-ui;margin:24px} nav a{margin-right:14px;cursor:pointer;color:#2563eb} .card{border:1px solid #ddd;border-radius:8px;padding:10px 14px;margin:10px 0}</style></head>
+<body>
+  <h1 id="clinic">Riverside Clinic (real)</h1>
+  <nav><a id="go-over">Overview</a><a id="go-pat">Patients</a><a id="go-bill">Billing</a></nav>
+  <div id="view"></div>
+<script>
+  const views = {
+    overview: '<div class="card">Visits today: <b id="visits">REAL 40</b></div>',
+    patients: '<div class="card">Active patients: <b id="patients">REAL 8420</b></div><div class="card">Visits today: <b id="visits">REAL 40</b></div>',
+    billing:  '<div class="card">Outstanding: <b id="owed">REAL 5000</b></div>',
+  };
+  function show(name, push) {
+    document.getElementById('view').innerHTML = views[name];          // the app re-renders on every "page"
+    if (push) history.pushState({}, '', '/test-page-spa.html?view=' + name);
+  }
+  document.getElementById('go-over').onclick = () => show('overview', true);
+  document.getElementById('go-pat').onclick = () => show('patients', true);
+  document.getElementById('go-bill').onclick = () => show('billing', true);
+  window.addEventListener('popstate', () => show(new URLSearchParams(location.search).get('view') || 'overview', false));   // Back / Forward
+  show(new URLSearchParams(location.search).get('view') || 'overview', false);
+</script></body></html>

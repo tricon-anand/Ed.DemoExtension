@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Analytics (API test app)</title>
+<script>
+  // These calls start while the page is still loading, before the extension could possibly
+  // have sent its rules. The hook must hold the responses briefly instead of letting real data through.
+  window.__result = {};
+  const domReady = new Promise((r) => document.addEventListener('DOMContentLoaded', r));
+
+  const dash = fetch('/api/dashboard.json').then((r) => r.json());
+  dash.then((d) => { window.__result.dashboard = d; });
+  Promise.all([dash, domReady]).then(([d]) => render(d));
+
+  fetch('/api/plain.txt').then((r) => r.text()).then((t) => { window.__result.plain = t; });
+  fetch(new Request('/api/legacy.json')).then((r) => r.json()).then((d) => { window.__result.legacyRequest = d; });
+
+  const x = new XMLHttpRequest();
+  x.open('GET', '/api/legacy.json');
+  x.onload = () => {
+    window.__result.legacy = JSON.parse(x.responseText);
+    domReady.then(() => { document.getElementById('customers').textContent = window.__result.legacy.customers.toLocaleString('en-US'); });
+  };
+  x.send();
+
+  const y = new XMLHttpRequest();
+  y.open('GET', '/api/legacy.json');
+  y.responseType = 'json';
+  y.onload = () => { window.__result.legacyJsonType = y.response; };
+  y.send();
+
+  function render(d) {
+    document.getElementById('company').textContent = d.company;
+    document.getElementById('revenue').textContent = d.kpis.revenue.toLocaleString('en-US');
+    const values = d.monthly.map((m) => m.revenue);
+    window.__chartValues = values;
+    window.__chartLabels = d.monthly.map((m) => m.month);
+    const c = document.getElementById('chart');
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height);
+    const max = Math.max(...values, 1);
+    const w = c.width / values.length;
+    g.fillStyle = '#2563eb';
+    values.forEach((v, i) => {
+      const h = (v / max) * (c.height - 30);
+      g.fillRect(i * w + 6, c.height - 20 - h, w - 12, h);
+    });
+    g.fillStyle = '#111827';
+    g.font = '11px sans-serif';
+    window.__chartLabels.forEach((m, i) => g.fillText(m, i * w + 6, c.height - 6));
+  }
+</script>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f3f4f6; margin: 0; }
+  header { background: #1e293b; color: #fff; padding: 14px 24px; font-weight: 700; font-size: 18px; }
+  main { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .card { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .label { color: #6b7280; font-size: 13px; }
+  .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <header><span id="company">...</span> <small id="static-title" style="font-weight:400;opacity:.7">static title</small></header>
+  <main>
+    <div class="cards">
+      <div class="card"><div class="label">Revenue (YTD)</div><div class="value" id="revenue">...</div></div>
+      <div class="card"><div class="label">Active customers (legacy API)</div><div class="value" id="customers">...</div></div>
+    </div>
+    <div class="card">
+      <div class="label">Monthly revenue (canvas chart: text rules cannot change this)</div>
+      <canvas id="chart" width="680" height="240"></canvas>
+    </div>
+  </main>
+</body>
+</html>

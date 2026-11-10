@@ -1,0 +1,34 @@
+{
+  "enabled": true,
+  "activeProfile": "UK",
+  "profiles": {
+    "US": {
+      "company": "Lakeshore Retail Inc.",
+      "user": "Sarah",
+      "currency": "$",
+      "revenue": "1,240,000",
+      "customers": "3,482"
+    },
+    "UK": {
+      "company": "Northbridge Retail Ltd",
+      "user": "Oliver",
+      "currency": "£",
+      "revenue": "1,980,500",
+      "customers": "5,214"
+    },
+    "India": {
+      "company": "Bharat Retail Pvt Ltd",
+      "user": "Priya",
+      "currency": "₹",
+      "revenue": "8,45,20,000",
+      "customers": "12,908"
+    }
+  },
+  "rules": [
+    { "id": "r1", "host": "localhost", "selector": "#company-name", "type": "text", "value": "{{company}}" },
+    { "id": "r2", "host": "localhost", "selector": "span[data-testid=\"welcome\"]", "type": "text", "value": "Welcome back, {{user}}" },
+    { "id": "r3", "host": "localhost", "selector": "#revenue", "type": "text", "value": "{{currency}}{{revenue}}" },
+    { "id": "r4", "host": "localhost", "selector": "#customers", "type": "text", "value": "{{customers}}" },
+    { "id": "r5", "host": "localhost", "selector": "#beta-banner", "type": "hide", "value": "" }
+  ]
+}
