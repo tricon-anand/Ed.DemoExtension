@@ -24,6 +24,17 @@
   };
   x.send();
 
+  // Students list via XHR with responseType json: the hook edits the parsed response
+  // (list swap, per-item edits, a key that does not exist in the real response) before the page reads it.
+  const sr = new XMLHttpRequest();
+  sr.open('GET', '/api/students.json');
+  sr.responseType = 'json';
+  sr.onload = () => {
+    window.__result.students = sr.response;
+    domReady.then(() => renderStudents(sr.response));
+  };
+  sr.send();
+
   const y = new XMLHttpRequest();
   y.open('GET', '/api/legacy.json');
   y.responseType = 'json';
@@ -50,6 +61,31 @@
     g.font = '11px sans-serif';
     window.__chartLabels.forEach((m, i) => g.fillText(m, i * w + 6, c.height - 6));
   }
+
+  function renderStudents(d) {
+    if (!d || !Array.isArray(d.students)) return;
+    const tb = document.getElementById('students-body');
+    tb.replaceChildren(...d.students.map((st) => {
+      const tr = document.createElement('tr');
+      [st.id, st.name, st.grade, Math.round((st.attendance || 0) * 100) + '%'].forEach((t) => {
+        const td = document.createElement('td');
+        td.textContent = t;
+        tr.appendChild(td);
+      });
+      return tr;
+    }));
+    document.getElementById('students-summary').textContent =
+      'Term ' + (d.term || '-') + ' · ' + (d.summary ? d.summary.total : d.students.length) +
+      ' students · avg attendance ' + Math.round((d.summary ? d.summary.avgAttendance : 0) * 100) + '%';
+    if (Array.isArray(d.highlights) && d.highlights.length) {
+      document.getElementById('highlights-card').style.display = '';
+      document.getElementById('highlights').replaceChildren(...d.highlights.map((t) => {
+        const li = document.createElement('li');
+        li.textContent = t;
+        return li;
+      }));
+    }
+  }
 </script>
 <style>
   body { font-family: system-ui, sans-serif; background: #f3f4f6; margin: 0; }
@@ -59,6 +95,11 @@
   .card { background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   .label { color: #6b7280; font-size: 13px; }
   .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #e5e7eb; }
+  th { color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .hint { color: #6b7280; font-size: 12px; margin-top: 8px; }
+  ul { margin: 8px 0 0 18px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -71,6 +112,18 @@
     <div class="card">
       <div class="label">Monthly revenue (canvas chart: text rules cannot change this)</div>
       <canvas id="chart" width="680" height="240"></canvas>
+    </div>
+    <div class="card">
+      <div class="label">Students (table rendered from an XHR JSON list)</div>
+      <table>
+        <thead><tr><th>ID</th><th>Student</th><th>Grade</th><th>Attendance</th></tr></thead>
+        <tbody id="students-body"></tbody>
+      </table>
+      <div class="hint" id="students-summary"></div>
+    </div>
+    <div class="card" id="highlights-card" style="display:none">
+      <div class="label">Highlights (key injected by the scenario - the real response has no such key)</div>
+      <ul id="highlights"></ul>
     </div>
   </main>
 </body>

@@ -1,0 +1,14 @@
+{
+  "term": "Fall 2026",
+  "summary": { "total": 8, "avgAttendance": 0.94 },
+  "students": [
+    { "id": "S-1001", "name": "Ava Thompson", "grade": "B", "attendance": 0.92 },
+    { "id": "S-1002", "name": "Liam Patel", "grade": "A", "attendance": 0.97 },
+    { "id": "S-1003", "name": "Maya Chen", "grade": "C+", "attendance": 0.85 },
+    { "id": "S-1004", "name": "Noah Fischer", "grade": "A-", "attendance": 0.91 },
+    { "id": "S-1005", "name": "Zara Ali", "grade": "B+", "attendance": 0.96 },
+    { "id": "S-1006", "name": "Ethan Brooks", "grade": "C", "attendance": 0.78 },
+    { "id": "S-1007", "name": "Lena Novak", "grade": "A", "attendance": 0.99 },
+    { "id": "S-1008", "name": "Omar Haddad", "grade": "B", "attendance": 0.88 }
+  ]
+}

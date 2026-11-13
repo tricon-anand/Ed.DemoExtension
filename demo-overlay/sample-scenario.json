@@ -7,21 +7,37 @@
       "user": "Sarah",
       "currency": "$",
       "revenue": "1,240,000",
-      "customers": "3,482"
+      "customers": "3,482",
+      "monthly_json": "[{\"month\":\"Jan\",\"revenue\":82000},{\"month\":\"Feb\",\"revenue\":91000},{\"month\":\"Mar\",\"revenue\":98000},{\"month\":\"Apr\",\"revenue\":105000},{\"month\":\"May\",\"revenue\":118000},{\"month\":\"Jun\",\"revenue\":124000}]",
+      "grade_all": "B+",
+      "students_count": "8",
+      "students_avg": "0.94"
     },
     "UK": {
       "company": "Northbridge Retail Ltd",
       "user": "Oliver",
       "currency": "£",
       "revenue": "1,980,500",
-      "customers": "5,214"
+      "customers": "5,214",
+      "monthly_json": "[{\"month\":\"Jan\",\"revenue\":74000},{\"month\":\"Feb\",\"revenue\":82000},{\"month\":\"Mar\",\"revenue\":89000},{\"month\":\"Apr\",\"revenue\":96000},{\"month\":\"May\",\"revenue\":104000},{\"month\":\"Jun\",\"revenue\":112000}]",
+      "students_json": "[{\"id\":\"S-2001\",\"name\":\"Oliver Hughes\",\"grade\":\"A\",\"attendance\":0.96},{\"id\":\"S-2002\",\"name\":\"Amelia Clarke\",\"grade\":\"B+\",\"attendance\":0.93},{\"id\":\"S-2003\",\"name\":\"Ravi Sharma\",\"grade\":\"A-\",\"attendance\":0.9},{\"id\":\"S-2004\",\"name\":\"Freya White\",\"grade\":\"B\",\"attendance\":0.88},{\"id\":\"S-2005\",\"name\":\"Tomas Kowal\",\"grade\":\"C+\",\"attendance\":0.82}]",
+      "students_count": "5",
+      "students_avg": "0.898",
+      "s1_grade": "A+",
+      "highlights_json": "[\"Top of class: Oliver Hughes (A+)\",\"Attendance up 4% this term\",\"Merit list: 5 students\"]"
     },
     "India": {
       "company": "Bharat Retail Pvt Ltd",
       "user": "Priya",
       "currency": "₹",
       "revenue": "8,45,20,000",
-      "customers": "12,908"
+      "customers": "12,908",
+      "monthly_json": "[{\"month\":\"Jan\",\"revenue\":61000},{\"month\":\"Feb\",\"revenue\":68000},{\"month\":\"Mar\",\"revenue\":75000},{\"month\":\"Apr\",\"revenue\":83000},{\"month\":\"May\",\"revenue\":92000},{\"month\":\"Jun\",\"revenue\":101000}]",
+      "students_json": "[{\"id\":\"S-3001\",\"name\":\"Aarav Nair\",\"grade\":\"A\",\"attendance\":0.95},{\"id\":\"S-3002\",\"name\":\"Diya Sharma\",\"grade\":\"A-\",\"attendance\":0.92},{\"id\":\"S-3003\",\"name\":\"Kabir Singh\",\"grade\":\"B+\",\"attendance\":0.89},{\"id\":\"S-3004\",\"name\":\"Meera Iyer\",\"grade\":\"A\",\"attendance\":0.97},{\"id\":\"S-3005\",\"name\":\"Rohan Das\",\"grade\":\"B\",\"attendance\":0.84}]",
+      "students_count": "5",
+      "students_avg": "0.914",
+      "s1_grade": "A+",
+      "highlights_json": "[\"Top of class: Aarav Nair (A+)\",\"Average attendance 91%\",\"Board prep shortlist ready\"]"
     }
   },
   "rules": [
@@ -29,6 +45,12 @@
     { "id": "r2", "host": "localhost", "selector": "span[data-testid=\"welcome\"]", "type": "text", "value": "Welcome back, {{user}}" },
     { "id": "r3", "host": "localhost", "selector": "#revenue", "type": "text", "value": "{{currency}}{{revenue}}" },
     { "id": "r4", "host": "localhost", "selector": "#customers", "type": "text", "value": "{{customers}}" },
-    { "id": "r5", "host": "localhost", "selector": "#beta-banner", "type": "hide", "value": "" }
+    { "id": "r5", "host": "localhost", "selector": "#beta-banner", "type": "hide", "value": "" },
+    { "id": "r6", "host": "localhost", "selector": "*/api/dashboard*", "type": "api",
+      "value": "[{\"path\":\"monthly\",\"value\":\"{{monthly_json}}\"}]" },
+    { "id": "r7", "host": "localhost", "selector": "*/api/students*", "type": "api",
+      "value": "[{\"path\":\"students\",\"value\":\"{{students_json}}\"},{\"path\":\"students[0].grade\",\"value\":\"{{s1_grade}}\"},{\"path\":\"summary.total\",\"value\":\"{{students_count}}\"},{\"path\":\"summary.avgAttendance\",\"value\":\"{{students_avg}}\"},{\"path\":\"highlights\",\"value\":\"{{highlights_json}}\"}]" },
+    { "id": "r8", "host": "localhost", "selector": "*/api/students*", "type": "api",
+      "value": "[{\"path\":\"students[*].grade\",\"value\":\"{{grade_all}}\"}]" }
   ]
 }

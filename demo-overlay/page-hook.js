@@ -77,7 +77,7 @@
       if (!pattern) continue;
       const edits = r.edits
         .filter((e) => e && typeof e.path === 'string')
-        .map((e) => ({ tokens: parsePath(e.path), value: e.value }))
+        .map((e) => ({ tokens: parsePath(e.path), value: e.value, json: asJsonValue(e.value) }))
         .filter((e) => e.tokens.length);
       if (edits.length) out.push({ method, re: globToRegExp(pattern), edits });
     }
@@ -92,7 +92,10 @@
   }
 
   // ---------- editing the JSON ----------
-  // A new value keeps the type of the old one: "1,980,500" replaces a number with a number.
+  // A plain string keeps the type of the old value: "1,980,500" replaces a number with a number.
+  // A value that is itself valid JSON (starts with { or [) replaces the value at the path
+  // WHOLESALE - that is how a whole list of items (chart points, table rows) gets injected,
+  // with any length, even where the response has no such key yet.
   function coerce(old, v) {
     if (typeof v === 'string') {
       if (typeof old === 'number' && /^\s*-?(\d[\d,]*(\.\d+)?|\.\d+)\s*$/.test(v)) return Number(v.replace(/[,\s]/g, ''));
@@ -101,27 +104,46 @@
     return v;
   }
 
-  // Only changes values that already exist. It never invents new keys.
-  function setAt(node, tokens, v, count) {
+  // The real object/array behind a JSON-looking value: a non-null object passes as-is, a string
+  // that parses as a JSON object/array is parsed, anything else keeps the string behaviour.
+  function asJsonValue(v) {
+    if (v !== null && typeof v === 'object') return v;
+    if (typeof v !== 'string') return undefined;
+    const s = v.trim();
+    if (s[0] !== '{' && s[0] !== '[') return undefined;
+    try {
+      const p = JSON.parse(s);
+      return p !== null && typeof p === 'object' ? p : undefined;
+    } catch (e) {
+      return undefined;          // not valid JSON: keep the string, nothing breaks
+    }
+  }
+
+  // Edits values in the parsed response. Only keys that already exist are changed, EXCEPT that
+  // a key the response does not have may be created when the new value is a whole object or list.
+  function setAt(node, tokens, edit, count) {
     if (node === null || typeof node !== 'object' || !tokens.length) return;
     const t = tokens[0];
     const rest = tokens.slice(1);
     if (t === '*') {
       if (!Array.isArray(node)) return;
       node.forEach((_, i) => {
-        if (rest.length) setAt(node[i], rest, v, count);
-        else { node[i] = coerce(node[i], v); count.n++; }
+        if (rest.length) setAt(node[i], rest, edit, count);
+        else if (edit.json === undefined) { node[i] = coerce(node[i], edit.value); count.n++; }
       });
       return;
     }
-    if (!Object.prototype.hasOwnProperty.call(node, t)) return;
-    if (rest.length) setAt(node[t], rest, v, count);
-    else { node[t] = coerce(node[t], v); count.n++; }
+    if (!Object.prototype.hasOwnProperty.call(node, t)) {
+      if (!rest.length && edit.json !== undefined && t !== '__proto__') { node[t] = edit.json; count.n++; }
+      return;
+    }
+    if (rest.length) setAt(node[t], rest, edit, count);
+    else { node[t] = edit.json !== undefined ? edit.json : coerce(node[t], edit.value); count.n++; }
   }
 
   function applyEdits(data, hits) {
     const count = { n: 0 };
-    for (const r of hits) for (const e of r.edits) setAt(data, e.tokens, e.value, count);
+    for (const r of hits) for (const e of r.edits) setAt(data, e.tokens, e, count);
     return count.n;
   }
 

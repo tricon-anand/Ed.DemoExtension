@@ -53,11 +53,17 @@ Many apps draw charts and tables from JSON calls (fetch or XHR), not from page t
 **Path syntax:** dots for keys, `[n]` for an array item, `[*]` for every item.
 **Rules:** only keys that already exist are changed. The new value takes the original type, so "1,980,500" replaces a number with a number. `{{variable}}` uses the active profile value.
 
+**Injecting a whole list:** a value that is itself valid JSON replaces the value at the path completely, so a list can be injected with a different length than the original - this is how charts and tables get whole new data sets. Keep the list in a profile variable as a JSON array and point one edit at it:
+
+    [{"path":"monthly","value":"{{monthly_json}}"}]     profile: monthly_json = [{"month":"Jan","revenue":82000}, ...]
+
+Numbers inside the list JSON stay raw (no separators, no filters). A key the response does not have can also be created, but only to hold a whole object or list.
+
 **Create one without typing JSON:** reload the app page, open the popup, expand "API data (charts and tables)", click "Show captured calls", pick a call, type new values and save.
 
 After switching profile, reload the page to refresh API data. The badge says so.
 
-**Test:** in the demo-overlay folder run `python -m http.server 8000`, open `http://localhost:8000/test-page-api.html`, and use a scenario with `target_host` = `localhost`.
+**Test:** in the demo-overlay folder run `python -m http.server 8000`, open `http://localhost:8000/test-page-api.html`, and use a scenario with `target_host` = `localhost`. `sample-scenario.json` includes ready-made list rules: the chart draws 6 months instead of the original 12, and the students table (rendered by XHR from `/api/students.json`) shows both strategies - UK and India swap the 8 original students for 5 invented ones (`students_json`), fix the first row's grade, keep the summary consistent, and inject a `highlights` key the real response does not have; the US profile has no `students_json`, so its 8 rows stay and every grade is rewritten in place (`students[*].grade`). Switch profile and reload to compare.
 
 
 ## Phase 3 Step 2: iframes, shadow DOM and several hosts
