@@ -321,6 +321,29 @@ async function openCall(call) {
   };
 }
 
+// The JSON responses the page itself loaded (page-hook keeps the originals). Sending their structure
+// with the build request lets the assistant write real api paths, so the brief no longer has to
+// spell out endpoint shapes. Only valid JSON bodies are sent; the server caps sizes again.
+async function gatherCaptures() {
+  const r = await pageMessage({ type: 'getCaptures' });
+  const calls = (r && r.calls) || [];          // newest first
+  const out = [];
+  const seen = new Set();
+  for (const c of calls) {
+    if (out.length >= 12) break;
+    const d = await pageMessage({ type: 'getCapture', id: c.id });
+    if (!d || !d.ok) continue;
+    let path = d.call.url, body;
+    try { path = new URL(d.call.url).pathname; } catch (e) {}
+    if (seen.has(path)) continue;              // same endpoint, different query string: one sample is enough
+    try { body = JSON.stringify(JSON.parse(d.call.text)); } catch (e) { continue; }
+    if (body.length > 60000) continue;
+    seen.add(path);
+    out.push({ url: d.call.url, method: d.call.method || 'GET', body });
+  }
+  return out;
+}
+
 // The side panel stays open while you switch tabs, so it follows the active tab.
 async function refreshTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -539,11 +562,16 @@ function initAI() {
     let head = 'Asking the assistant... rules appear as they are proposed\n';
     const paint = () => aiMsg((live.rules.length || live.profiles.length ? '' : head) + liveText(live));
     try {
-      aiMsg('Reading the page...');
-      const scan = await pageMessage({ type: 'scan' });
+      aiMsg('Gathering captured API responses...');
+      let apiJson = [];
+      try { apiJson = await gatherCaptures(); } catch (e) {}
+      if (!apiJson.length) {
+        throw new Error('No API responses captured yet. Please reload the test page so the extension intercepts the API requests, then click Build again.');
+      }
+      aiMsg('Building API scenario from ' + apiJson.length + ' captured endpoint' + (apiJson.length === 1 ? '' : 's') + '...');
       paint();
       let final = null;
-      await aiStream({ brief, snapshot: scan.elements, host: tabHost }, (kind, ev) => {
+      await aiStream({ brief, snapshot: [], api_json: apiJson, host: tabHost }, (kind, ev) => {
         if (kind === 'rule') { live.rules.push(ev.rule); paint(); }
         else if (kind === 'profile') { live.profiles.push(ev.profile); paint(); }
         else if (kind === 'tool' && ev.ok === false) { live.notes.push(ev.name + ': ' + ev.output); paint(); }  // the model self-corrects
@@ -575,16 +603,21 @@ function initAI() {
   $('aiApply').onclick = async () => {
     busy(true);
     const warns = [];
+    let activeProfile = '';
     try {
       for (const run of aiRuns) {
         const r = await send({ type: 'aiApply', runId: run.id, allowIncomplete: !!run.incomplete });
         if (!r.ok) throw new Error(r.error);
         if (r.result && Array.isArray(r.result.warnings)) warns.push(...r.result.warnings);
+        if (r.result && Array.isArray(r.result.profiles_touched) && r.result.profiles_touched.length) {
+          activeProfile = r.result.profiles_touched[0];     // the extension switched to the profile the run built for
+        }
       }
       aiRuns = [];
       $('aiApply').style.display = 'none';
       await load(); render();
-      aiMsg('Applied and synced. Reload the page to see it.'
+      aiMsg('Applied and synced' + (activeProfile ? ' — active profile: ' + activeProfile : '')
+        + '. Reload the page to see it.'
         + (warns.length ? '\nWarnings: ' + warns.join(' ') : ''));
     } catch (e) { aiMsg(e.message, true); } finally { busy(false); }
   };

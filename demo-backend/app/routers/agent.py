@@ -30,9 +30,17 @@ class Element(BaseModel):
     text: str = Field(default="", max_length=200)
 
 
+class CaptureIn(BaseModel):
+    """One JSON response the extension captured while the page was used (originals, pre-edit)."""
+    url: str = Field(min_length=1, max_length=2000)
+    method: str = Field(default="GET", max_length=10)
+    body: str = Field(max_length=100000)
+
+
 class BuildIn(BaseModel):
     brief: str = Field(min_length=3, max_length=4000)
     snapshot: list[Element] = Field(default_factory=list, max_length=300)
+    api_json: list[CaptureIn] = Field(default_factory=list, max_length=40)
     research: bool = False
     host: str = Field(default="", max_length=255)
 
@@ -119,10 +127,11 @@ def status(user=Depends(get_current_user)):
 def build(scenario_id: int, body: BuildIn, db: Session = Depends(get_db), user=Depends(editor)):
     sc = get_org_scenario(db, user, scenario_id)
     snap = [e.model_dump() for e in body.snapshot]
+    caps = [c.model_dump() for c in body.api_json]
     existing = [r.selector for r in sc.rules]
     return _run(db, user, sc, "build", body.brief,
                 lambda c, rec: agent_mod.run_builder(c, body.brief, snap, existing, body.research,
-                                                     body.host or sc.target_host, recorder=rec))
+                                                     body.host or sc.target_host, api_caps=caps, recorder=rec))
 
 
 # ---------- streaming build: partial results reach the user while the agent is still working ----------
@@ -143,6 +152,7 @@ def build_stream(scenario_id: int, body: BuildIn, db: Session = Depends(get_db),
     final `done` event with `complete: false`, so a half-built proposal is shown and can be applied."""
     sc = get_org_scenario(db, user, scenario_id)
     snap = [e.model_dump() for e in body.snapshot]
+    caps = [c.model_dump() for c in body.api_json]
     existing = [r.selector for r in sc.rules]
     client = _client()                    # raises 503 before the stream starts when no API key is set
 
@@ -180,7 +190,7 @@ def build_stream(scenario_id: int, body: BuildIn, db: Session = Depends(get_db),
                 try:
                     proposal, trace = agent_mod.run_builder(
                         client, body.brief, snap, existing, body.research, body.host or sc.target_host,
-                        recorder=rec, emit=emit)
+                        api_caps=caps, recorder=rec, emit=emit)
                 except Exception as e:    # model/network problems must not become a stack trace on the stream
                     persist()
                     wrun.status, wrun.proposal = "failed", {"error": str(e)[:300]}
@@ -297,6 +307,7 @@ def apply_run(run_id: int, body: ApplyIn | None = None, db: Session = Depends(ge
     p = run.proposal
     added_rules = added_profiles = vars_set = 0
     warnings: list[str] = []
+    touched: list[str] = []     # profiles this run created or merged into: they own the new variables
     if run.kind == "repair":
         rule = get_org_rule(db, user, p["rule_id"])
         if not p.get("selector"):
@@ -328,12 +339,14 @@ def apply_run(run_id: int, body: ApplyIn | None = None, db: Session = Depends(ge
                 merged.update(pr["variables"])      # keep the other variables, set the proposed ones
                 existing.variables = merged
                 vars_set += len(pr["variables"])
+                touched.append(pr["name"])
                 continue
             db.add(models.Profile(scenario_id=sc.id, name=pr["name"], variables=pr["variables"]))
             added_profiles += 1
+            touched.append(pr["name"])
     run.status = "applied"
     touch(db, user, sc, "agent.apply", f"run {run.id}: {added_rules} rules, {added_profiles} profiles, {vars_set} variables")
     db.commit()
     return {"ok": True, "rules_added": added_rules, "profiles_added": added_profiles, "variables_set": vars_set,
             "version": sc.version, "incomplete": run.kind != "repair" and not p.get("complete"),
-            "warnings": warnings}
+            "warnings": warnings, "profiles_touched": touched}

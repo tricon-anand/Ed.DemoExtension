@@ -103,6 +103,7 @@ def test_proposal_changes_nothing_until_applied(client, org_a, fake_agent):
     assert client.get(f"/scenarios/{sid}/rules", headers=org_a).json() == []          # not applied yet
     ap = client.post(f"/agent/runs/{run['run_id']}/apply", headers=org_a)
     assert ap.json()["rules_added"] == 2 and ap.json()["profiles_added"] == 1
+    assert ap.json()["profiles_touched"] == ["UK"]                                   # the run built for this profile
     assert len(client.get(f"/scenarios/{sid}/rules", headers=org_a).json()) == 2
     assert client.post(f"/agent/runs/{run['run_id']}/apply", headers=org_a).status_code == 409   # only once
     assert "agent.apply" in {a["action"] for a in client.get("/audit", headers=org_a).json()}
@@ -368,6 +369,7 @@ def test_apply_merges_variables_into_existing_profile(client, org_a, fake_agent)
     r2 = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "change user in first row", "snapshot": SNAP}, headers=org_a).json()
     ap = client.post(f"/agent/runs/{r2['run_id']}/apply", headers=org_a).json()
     assert ap["variables_set"] == 1
+    assert ap["profiles_touched"] == ["UK"]              # a merged profile is also made active by the extension
     prof = [p for p in client.get(f"/scenarios/{sid}/profiles", headers=org_a).json() if p["name"] == "UK"][0]
     assert prof["variables"]["user_row1"] == "Zed" and prof["variables"]["rev"] == "1980"
 
@@ -457,3 +459,180 @@ def test_proposal_problems_flags_missing_variables():
     rules = [{"type": "text", "value": "{{a}}"}]
     assert any("missing" in p for p in agent_mod.proposal_problems(rules, {"UK": {}}))
     assert agent_mod.proposal_problems(rules, {"UK": {"a": "1"}}) == []
+
+
+# ---------- list scenarios: whole-list api rules, JSON variables and their validation ----------
+
+STUDENTS_BRIEF = ("Replace the student list on the dashboard with 8 invented students. The list is served by "
+                  "GET /api/students.json and every item looks like "
+                  '{"id":"S-1001","name":"Ava Thompson","grade":"B","attendance":0.92}.')
+
+
+def test_prompt_teaches_list_strategies():
+    assert "LISTS AND TABLES" in agent_mod.SYSTEM and "{{students_json}}" in agent_mod.SYSTEM
+    assert "students[0].grade" in agent_mod.SYSTEM and "students[*]." in agent_mod.SYSTEM
+    assert "different length" in agent_mod.SYSTEM
+    assert "DIFFER from the ones already on the page" in agent_mod.SYSTEM          # no near-duplicate names
+    assert "*/api/students*" in agent_mod.SYSTEM and "_locale" in agent_mod.SYSTEM
+
+
+def test_api_rule_paths_and_nested_json_are_validated():
+    def rule(value):
+        return agent_mod.Builder([]).propose_rule("*/api/students*", "api", value)
+    assert rule('[{"path":"students","value":"[{\\"name\\":\\"Asha\\"}]"}]').startswith("OK")     # inline list, valid JSON
+    assert rule('[{"path":"students[*].grade","value":"A"}]').startswith("OK")                  # wildcard path
+    assert rule('[{"path":"students","value":"{{students_json}}"}]').startswith("OK")           # the whole-variable pattern
+    assert rule('[{"path":"students","value":""}]').startswith("OK")                           # an empty value stays allowed
+    bad_path = rule('[{"path":"students..name","value":"x"}]')
+    assert bad_path.startswith("ERROR") and "students..name" in bad_path and "[*]" in bad_path
+    bad_json = rule('[{"path":"students","value":"[{\'name\':\'Asha\'}]"}]')
+    assert bad_json.startswith("ERROR") and "'students'" in bad_json and "JSON" in bad_json
+    # updating a rule with a new value succeeds so the model can self-correct; identical value is rejected
+    b = agent_mod.Builder([])
+    assert b.propose_rule("*/api/students*", "api", '[{"path":"students","value":"1"}]').startswith("OK")
+    assert b.propose_rule("*/api/students*", "api", '[{"path":"students","value":"1"}]').startswith("ERROR")
+    assert b.propose_rule("*/api/students*", "api", '[{"path":"students","value":"2"}]') == "OK: rule 1 updated"
+
+
+def test_profile_list_variables_must_parse():
+    b = agent_mod.Builder([])
+    assert b.propose_profile("UK", {"students_json": '[{"name":"Asha","grade":"A"}]'}).startswith("OK")
+    bad = agent_mod.Builder([]).propose_profile("UK", {"students_json": "[{'name':'Asha'}]"})
+    assert bad.startswith("ERROR") and "students_json" in bad and "JSON array" in bad
+    native = agent_mod.Builder([]).propose_profile("UK", {"students_json": [{"name": "Asha"}]})
+    assert native.startswith("ERROR") and "students_json" in native        # a real list must be sent as a string
+    assert agent_mod.Builder([]).propose_profile("UK", {"note": "Hello {{user}}"}).startswith("OK")
+
+
+def test_list_proposal_has_no_bogus_warnings_but_catches_missing_vars():
+    rules = [{"type": "api", "value": '[{"path":"students","value":"{{students_json}}"},{"path":"customers","value":"{{customers}}"}]'},
+             {"type": "text", "value": "{{students_count}}"}]
+    profiles = {"Springfield High": {"students_json": '[{"name":"Asha"}]', "students_count": "8", "customers": "5420"}}
+    assert agent_mod.proposal_problems(rules, profiles) == []
+    assert any("missing" in p for p in agent_mod.proposal_problems(rules, {"Springfield High": {}}))
+
+
+def test_builder_builds_a_whole_list_scenario():
+    students = [{"id": "S-%04d" % i, "name": "Student %d" % i, "grade": "A", "attendance": round(0.9 + i / 100, 2)}
+                for i in range(1, 9)]
+    fake = FakeClient([
+        [tool("propose_rule", selector="*/api/students*", type="api",
+              value='[{"path":"students","value":"{{students_json}}"},{"path":"summary.total","value":"{{students_count}}"}]'),
+         tool("propose_profile", name="Springfield High",
+              variables={"students_json": _json.dumps(students), "students_count": "8"}),
+         tool("finish", summary="students demo")],
+    ])
+    proposal, trace = agent_mod.run_builder(fake, STUDENTS_BRIEF, [])
+    assert proposal["complete"] and proposal["problems"] == []
+    rule = proposal["rules"][0]
+    assert rule["type"] == "api" and rule["selector"] == "*/api/students*"
+    edits = _json.loads(rule["value"])
+    assert edits[0] == {"path": "students", "value": "{{students_json}}"}
+    assert _json.loads(proposal["profiles"][0]["variables"]["students_json"]) == students
+    assert len(trace) == 1
+
+
+# ---------- captured API responses feed the build prompt (Increment 3) ----------
+
+def capture(url, body, method="GET"):
+    return {"url": url, "method": method, "body": _json.dumps(body)}
+
+
+STUDENTS_CAP = capture("http://localhost:8000/api/students.json", {
+    "term": "Fall 2025", "total": 8,
+    "students": [{"id": "S-1001", "name": "Ava Thompson", "grade": "B", "attendance": 0.92},
+                 {"id": "S-1002", "name": "Ben Ortega", "grade": "A", "attendance": 0.97},
+                 {"id": "S-1003", "name": "Chen Wei", "grade": "C", "attendance": 0.81}]})
+DASH_CAP = capture("http://localhost:8000/api/dashboard.json", {"kpis": {"revenue": 1234}, "monthly": [{"month": "Jan", "revenue": 100}]})
+
+
+def test_prompt_teaches_captured_api_responses():
+    assert "CAPTURED API RESPONSES" in agent_mod.SYSTEM
+    assert "Without captures, only write paths the brief actually gives you" in agent_mod.SYSTEM
+
+
+def test_captured_apis_are_summarized_in_the_prompt():
+    sent = []
+
+    class Spy:
+        messages = None
+        def create(self, **kw):
+            sent.append(kw["messages"][0]["content"])
+            return NS(content=[], stop_reason="end_turn")
+    spy = Spy(); spy.messages = spy
+    agent_mod.run_builder(spy, "texas district demo", [], api_caps=[STUDENTS_CAP, DASH_CAP])
+    p = sent[0]
+    assert "CAPTURED API RESPONSES" in p
+    assert "*/api/students.json*" in p and "*/api/dashboard.json*" in p     # ready-to-copy selector patterns
+    assert "…+2 more items" in p and "Ava Thompson" in p and "attendance" in p   # structure, not the whole body
+    assert '"id":"S-1002"' not in p                                        # one sample item, not the whole list
+    sent.clear()
+    agent_mod.run_builder(spy, "texas district demo", [])
+    assert "CAPTURED API RESPONSES" not in sent[0]                          # nothing captured: prompt unchanged
+
+
+def test_api_paths_are_nudged_towards_captured_structure():
+    def note_for(value, selector="*/api/students*"):
+        # a fresh Builder per call: a second api rule for the same selector would be a duplicate
+        return agent_mod.Builder([], (), None, [STUDENTS_CAP]).propose_rule(selector, "api", value)
+
+    assert "NOTE" not in note_for('[{"path":"students[*].grade","value":"A"}]')       # a path the capture shows
+    whole = note_for('[{"path":"students","value":"{{students_json}}"}]')
+    assert whole.startswith("OK") and "NOTE" not in whole                  # wholesale replace of a shown key
+    filled = note_for('[{"path":"summary.total","value":"{{n}}"}]')
+    assert filled.startswith("OK") and "NOTE" not in filled               # a placeholder is not checkable yet
+    scalar = note_for('[{"path":"summary.total","value":"5"}]')
+    assert scalar.startswith("OK") and "summary.total" in scalar and "NOTE" in scalar       # nudge, not an error
+    unmatched = note_for('[{"path":"x","value":"1"}]', "*/api/other*")
+    assert unmatched.startswith("OK") and "no captured response matches" in unmatched
+    # a nudged rule is still a valid rule: not flagged as a proposal problem
+    assert agent_mod.proposal_problems([{"type": "api", "value": '[{"path":"summary.total","value":"5"}]'}],
+                                       {"Texas": {"n": "1"}}) == []
+
+
+def test_captured_paths_accept_new_keys_and_exact_indexes():
+    def note_for(value):
+        return agent_mod.Builder([], (), None, [STUDENTS_CAP]).propose_rule("*/api/students*", "api", value)
+
+    # a missing key with a whole-list value is the "highlights" pattern: created on purpose, no nudge
+    ok = note_for('[{"path":"highlights","value":"[\\"One district\\"]"}]')
+    assert ok.startswith("OK") and "NOTE" not in ok
+    ok2 = note_for('[{"path":"highlights","value":"{{highlights_json}}"}]')
+    assert ok2.startswith("OK") and "NOTE" not in ok2                     # same, via a profile variable
+    assert "NOTE" not in note_for('[{"path":"students[0].grade","value":"A"}]')
+    assert "NOTE" not in note_for('[{"path":"term","value":"Spring"}]')
+    nudged = note_for('[{"path":"students[9].grade","value":"A"}]')
+    assert "NOTE" in nudged and "students[9].grade" in nudged              # beyond the captured 3 items
+    assert note_for('[{"path":"GET students","value":"x"}]').startswith("ERROR")
+
+
+def test_groq_sends_fewer_captured_endpoints(monkeypatch):
+    monkeypatch.setenv("AGENT_PROVIDER", "groq")
+    monkeypatch.delenv("AGENT_MAX_ENDPOINTS", raising=False)
+    caps = [capture(f"http://x.test/api/e{i}", {"k": i}) for i in range(20)]
+    sent = []
+
+    class Spy:
+        messages = None
+        def create(self, **kw):
+            sent.append(kw["messages"][0]["content"])
+            return NS(content=[], stop_reason="end_turn")
+    spy = Spy(); spy.messages = spy
+    agent_mod.run_builder(spy, "x y z", [], api_caps=caps)
+    assert "e7" in sent[0] and "e8" not in sent[0]
+    # validation still checks against every capture, even the ones cut from the prompt
+    b = agent_mod.Builder([], (), None, caps)
+    out = b.propose_rule("*/api/e12*", "api", '[{"path":"k","value":"1"}]')
+    assert out.startswith("OK") and "NOTE" not in out
+
+
+def test_build_accepts_captured_api_json_and_plumbs_it(client, org_a, fake_agent):
+    fake = fake_agent(GOOD)
+    sid = mk(client, org_a)
+    r = client.post(f"/agent/scenarios/{sid}/build", json={
+        "brief": "texas district demo", "snapshot": [], "api_json": [STUDENTS_CAP]}, headers=org_a)
+    assert r.status_code == 200, r.text
+    assert "*/api/students.json*" in fake.seen[0][0]["content"]            # the prompt the model received
+    r = client.post(f"/agent/scenarios/{sid}/build/stream", json={
+        "brief": "x y z", "api_json": [{"url": "x", "body": "not json"}]}, headers=org_a)
+    assert r.status_code == 200                                           # a bad body is just not used for structure

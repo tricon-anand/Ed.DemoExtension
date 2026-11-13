@@ -148,6 +148,19 @@ async function handle(msg) {
       const r = await call(`/agent/runs/${msg.runId}/apply`, { method: 'POST',
         body: msg.allowIncomplete ? { allow_incomplete: true } : undefined, keepSession: true });
       await loadScenario(s.scenarioId, true);
+      // the new rules are built for the profile the run created or merged into: make it active, otherwise
+      // the api edits ({{variables}}) are dropped as missing and the page shows no change at all
+      const touched = (r.data && r.data.profiles_touched) || [];
+      if (touched.length) {
+        const st = await store.get('demo');
+        if (st && st.profiles && st.profiles[touched[0]]) {
+          st.activeProfile = touched[0];
+          await store.set({ demo: st });
+          try {
+            await call(`/scenarios/${s.scenarioId}/my-profile`, { method: 'PUT', body: { profile: touched[0] }, keepSession: true });
+          } catch (e) { /* the profile may be local only */ }
+        }
+      }
       return { ok: true, result: r.data };
     }
     default: return { ok: false, error: 'Unknown message' };

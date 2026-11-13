@@ -10,6 +10,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from app.formatting import FILTERS, FILTER_EXPR, PLAIN_EXPR
 from app.services import VALID_TYPES
@@ -173,17 +174,24 @@ A scenario is a list of RULES and a list of PROFILES.
 - A profile is a named persona or country (for example "India") holding the variable values, plus
   _locale (en_US, en_IN, en_GB, de_DE) and _currency (USD, INR, GBP, EUR) whenever a filter is used.
 - An "api" rule changes JSON that the page loads. Its selector is a URL pattern with * wildcards and its
-  value is a JSON list like [{"path":"kpis.revenue","value":"{{revenue}}"}].
+  value is a JSON list like [{"path":"kpis.revenue","value":"{{revenue}}"}]. Paths are dot separated keys
+  with an optional [n] index or [*] for every item (monthly[*].revenue, students[0].grade). An edit value
+  that is itself valid JSON (it starts with { or [) replaces the value at the path WHOLESALE - with any
+  length, even a key the response does not have yet. That is how a whole list gets injected.
 Rules you must follow:
-1. Only use selectors from the page snapshot you are given. Never invent a selector. Prefer selectors that use an id or a
-   data-/aria- attribute over long chains of :nth-of-type, when the snapshot offers both.
+1. Selectors:
+   - For DOM rules (text, hide, image, html): only use selectors from the page snapshot you are given. Never invent a CSS selector. Prefer selectors that use an id or a data-/aria- attribute over long chains of :nth-of-type.
+   - For api rules: the selector is the URL pattern with * wildcards (e.g. */api/students*). Never use CSS selectors for api rules.
 2. All people, patients, students and customers must be INVENTED. Never use real personal data.
 3. Raw numbers go in the profile (enrollments = 12000) and the rule formats them ({{enrollments | number}},
-   {{revenue | currency}}, {{rate | percent}}).
+   {{revenue | currency}}, {{rate | percent}}). Only exception: numbers inside a list variable stay raw
+   (see LISTS AND TABLES).
 4. An element that shows only a number must get a value that is ONLY the placeholder, for example {{enrollments | number}}.
    Never add words such as "Enrollments:" to it: the label is a separate element and already on the page.
-5. Cover every element in the snapshot that shows a metric, count, date, organisation name or person name that the brief
-   implies. The page title and the organisation shown in headers usually need a rule too.
+5. Cover high-level metrics, counts, dates, titles, and organisation names that the brief touches.
+   CRITICAL FOR TABLES AND LISTS:
+   - NEVER create individual DOM text rules for table rows or cells (tr > td, tr:nth-of-type...) when the data comes from an API or when CAPTURED API RESPONSES are provided. Proposing cell-by-cell DOM rules for a table or list is forbidden.
+   - Always use an "api" rule instead to replace or modify the data at the source. One whole-list api rule cleanly updates the entire table or chart in a single rule.
 6. Make exactly ONE profile, named after the place or persona in the brief (for example "Texas"), unless the brief asks
    for several. Several profiles must differ in a believable way.
 7. Every variable a rule uses must exist in EVERY profile.
@@ -191,12 +199,60 @@ Rules you must follow:
    first row", "rename the title"), propose ONLY the rule(s) for exactly that element, using the most specific selector
    from the snapshot, and a profile holding ONLY the new variable(s). Give the variable a name that is unique to that
    element (for example enrollments_row1) so no other element is affected. Never add rules for other rows, columns or
-   elements, and never use a placeholder you did not define in the profile.
-9. Use propose_rule and propose_profile, then call finish. If a tool returns an error, fix it and retry."""
+   elements, and never use a placeholder you did not define in the profile. This is for briefs about ONE element;
+   a brief about a whole list is handled by LISTS AND TABLES below.
+9. Use propose_rule and propose_profile, then call finish. If a tool returns an error, fix it and retry.
+
+LISTS AND TABLES: when the brief asks to change a list of items (students, deals, chart points, table rows), prefer api rules:
+- WHOLE LIST (the default): one edit replaces the entire array and may have a different length than the
+  original: [{"path":"students","value":"{{students_json}}"}]. The profile then holds the whole list as ONE
+  variable whose text is a valid JSON array, for example
+  students_json = [{"id":"S-2001","name":"Oliver Hughes","grade":"A","attendance":0.96}, ...]
+  Invent believable items that follow the structure of the real response. Inside a list variable numbers
+  stay raw (no separators, no symbols, no filters) and there are no {{placeholders}}.
+- PARTIAL EDITS: when only some fields change and the item count stays the same, use indexed or wildcard
+  paths (students[0].grade, students[*].status). Keep summary fields such as counts and totals consistent
+  with the new list.
+- Make the change obvious: invent names and ids that DIFFER from the ones already on the page (never repeat
+  an original name - the audience must see the difference), prefer URL patterns that start and end with *
+  (*/api/students*), and include _locale and _currency in the profile whenever any rule uses a formatting filter.
+- CAPTURED API RESPONSES: the message may list JSON responses the page itself loaded while it was used
+  (a ready selector pattern, method, URL, item count and a shape sample). When captures are given, base
+  api rules on them: copy the selector pattern exactly as written, write paths the sample shows, replace a
+  whole list or extend it with invented items (the item count may differ), and never invent another endpoint
+  or a path the captures do not show. When captures exist, DO NOT propose DOM text rules for table cells or chart points - use api rules instead!
+  Without captures, only write paths the brief actually gives you; if
+  the brief does not say which endpoint serves the list and how an item is structured, do not guess: fall
+  back to DOM rules from the snapshot (one text rule per cell, or one html rule that replaces the list
+  container) and note in the summary what you could not verify."""
 
 
 TARGETED = re.compile(r"\b(update|change|replace|edit|fix|modify|rename)\b|\b(only|just)\b", re.I | re.S)
 NUMERIC_TEXT = re.compile(r"^[\s$€£₹+\-]*\d[\d,.\s]*(%|[kKmMbB])?\s*$")
+API_PATH = re.compile(r"[\w-]+(\[\d+\]|\[\*\])*(\.[\w-]+(\[\d+\]|\[\*\])*)*")
+PATH_TOKEN = re.compile(r"[\w-]+|\[(\d+|\*)\]")
+URL_PREFIX = re.compile(r"^(GET|POST|PUT|PATCH|DELETE)\s+", re.I)
+
+
+def _path_tokens(path: str):
+    """An api path ('students[*].grade') as a walk list: keys as strings, indexes as '0', '1', wildcards as '*'."""
+    return [m.group(1) if m.group(1) is not None else m.group(0) for m in PATH_TOKEN.finditer(path)]
+
+
+def _path_exists(node, tokens) -> bool:
+    """True when an edit path resolves inside a captured response. [*] stands for the first item:
+    if the path exists for one item it is a real path, and items may differ without making it wrong.
+    An empty token list means the location itself was reached (its old value may be anything)."""
+    if not tokens:
+        return True
+    t, rest = tokens[0], tokens[1:]
+    if t == "*":
+        return isinstance(node, list) and bool(node) and _path_exists(node[0], rest)
+    if t.isdigit():
+        return isinstance(node, list) and int(t) < len(node) and _path_exists(node[int(t)], rest)
+    if isinstance(node, dict):
+        return t in node and _path_exists(node[t], rest)
+    return False
 
 
 def _is_numeric(text: str) -> bool:
@@ -217,7 +273,7 @@ class Builder:
     `emit(kind, payload)` is called the moment something is accepted, so a caller can
     stream partial results instead of waiting for the whole loop to finish."""
 
-    def __init__(self, snapshot, existing_selectors=(), emit=None):
+    def __init__(self, snapshot, existing_selectors=(), emit=None, api_caps=None):
         self.emit = emit
         self.snapshot = snapshot or []
         self.known = {e["selector"] for e in self.snapshot}
@@ -229,6 +285,68 @@ class Builder:
         self.targeted = False           # a narrow edit: no "cover everything" nudge
         self.warned = False             # the "uncovered elements" check is only a nudge, shown once
         self.text_of = {e["selector"]: e.get("text", "") for e in self.snapshot}
+        # JSON responses the page itself loaded ({"url","method","body"}): parsed once, they drive both
+        # the build prompt (structure summary) and the path nudge below. Bodies that do not parse are dropped.
+        self.api_caps: list[dict] = []
+        for c in api_caps or []:
+            if not isinstance(c, dict):
+                continue
+            data = c.get("body")
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except ValueError:
+                    continue
+            if not isinstance(data, (dict, list)):
+                continue
+            self.api_caps.append({"url": str(c.get("url") or ""), "method": str(c.get("method") or "GET").upper(),
+                                  "data": data})
+
+    def _matching_caps(self, selector):
+        """Captured responses the api rule's URL pattern points at (same idea as the page hook:
+        an optional method prefix, * wildcards, tried against a few spellings of the URL)."""
+        pattern = URL_PREFIX.sub("", (selector or "").strip())
+        if not pattern:
+            return []
+        rex = re.compile("^" + ".*".join(re.escape(s) for s in pattern.split("*")) + "$")
+        out = []
+        for c in self.api_caps:
+            try:
+                u = urlparse(c["url"])
+            except ValueError:
+                continue
+            forms = (c["url"], u.path + ("?" + u.query if u.query else ""), u.netloc + u.path)
+            if any(rex.fullmatch(f) for f in forms):
+                out.append(c)
+        return out
+
+    def _api_note(self, selector, edits):
+        """A nudge, never an error: a path the captured responses do not show may be a new key the
+        demo deliberately injects (the extension creates missing keys for whole object/list values),
+        and a {{placeholder}} value is only complete after the profile fills it."""
+        caps = [c for c in self._matching_caps(selector) if c["data"] is not None]
+        if self.api_caps and not caps:
+            return (f"NOTE: no captured response matches '{selector}'. The page may not call that URL;"
+                    " build api rules on the endpoints listed under CAPTURED API RESPONSES instead,"
+                    " unless this URL is right for a reason the captures cannot show.")
+        if not caps:
+            return ""
+        missing = []
+        for e in edits:
+            p = e["path"].strip()
+            if any(_path_exists(c["data"], _path_tokens(p)) for c in caps):
+                continue
+            v = e.get("value")
+            whole = isinstance(v, str) and v.lstrip()[:1] in ("{", "[")
+            if whole or "{{" in str(v or ""):
+                continue                      # a new key created on purpose, or not checkable yet
+            missing.append(p)
+        if not missing:
+            return ""
+        return ("NOTE: these paths were not found in the captured response(s) for '" + selector + "': "
+                + ", ".join(missing) + ". A plain value at a missing key is never applied (only whole"
+                " objects/lists can create a key); correct the path, or make the value a whole JSON"
+                " object/list on purpose.")
 
     # --- tools ---
     def propose_rule(self, selector="", type="text", value="", reason="", **_):
@@ -244,6 +362,21 @@ class Builder:
                 assert all(isinstance(e, dict) and isinstance(e.get("path"), str) and "value" in e for e in edits)
             except Exception:
                 return 'ERROR: for api rules value must be a JSON list like [{"path":"a.b","value":"..."}]'
+            for e in edits:
+                p = e["path"].strip()
+                if not API_PATH.fullmatch(p):
+                    return ("ERROR: api path '" + p + "' is not valid. Use dot separated keys with an optional"
+                            " [n] index or [*] for every item, for example students[0].grade or monthly[*].revenue")
+                v = e.get("value")
+                # a value holding {{placeholders}} is only complete after the profile fills it: not checkable here
+                if isinstance(v, str) and "{{" not in v and v.lstrip()[:1] in ("{", "["):
+                    try:
+                        json.loads(v)
+                    except ValueError as ex:
+                        return ("ERROR: the value for path '" + p + "' looks like JSON but is not valid: " + str(ex) +
+                                ". The extension injects it literally, so it must parse (double quotes, no trailing"
+                                " commas). For a whole list prefer one profile variable holding the JSON array.")
+            note = self._api_note(selector, edits)
         elif self.snapshot and selector not in self.known:
             close = [s for s in sorted(self.known) if any(w and w in s for w in re.split(r"\W+", selector)[:3])][:5]
             return ("ERROR: this selector is not in the page snapshot. Use one of the snapshot selectors"
@@ -255,13 +388,22 @@ class Builder:
         for name, flt in _placeholders(value):
             if flt and flt not in FILTERS:
                 return f"ERROR: unknown filter '{flt}'. Use one of {sorted(FILTERS)}"
-        if any(r["selector"] == selector and r["type"] == type for r in self.rules):
-            return "ERROR: a rule for this selector and type was already proposed"
+        for i, r in enumerate(self.rules):
+            if r["selector"] == selector and r["type"] == type:
+                if r["value"] == value:
+                    return "ERROR: a rule for this selector and type was already proposed"
+                self.rules[i] = {"selector": selector, "type": type, "value": value, "reason": (reason or "")[:300],
+                                 "exists": selector in self.existing}
+                if self.emit is not None:
+                    self.emit("rule_update", {"rule": dict(self.rules[i]), "count": len(self.rules)})
+                ok = f"OK: rule {i + 1} updated"
+                return ok + ("\n" + note if type == "api" and note else "")
         self.rules.append({"selector": selector, "type": type, "value": value, "reason": (reason or "")[:300],
                            "exists": selector in self.existing})
         if self.emit is not None:
             self.emit("rule", {"rule": dict(self.rules[-1]), "count": len(self.rules)})
-        return f"OK: rule {len(self.rules)} recorded"
+        ok = f"OK: rule {len(self.rules)} recorded"
+        return ok + ("\n" + note if type == "api" and note else "")
 
     def propose_profile(self, name="", variables=None, **_):
         name = (name or "").strip()
@@ -270,6 +412,16 @@ class Builder:
         bad = [k for k in variables if not re.fullmatch(r"[\w.-]+", str(k))]
         if bad:
             return f"ERROR: invalid variable names {bad}"
+        for k, v in variables.items():
+            text = str(v).strip()
+            # a value holding {{placeholders}} is only complete after the profile fills it: not checkable here
+            if "{{" not in text and text[:1] in ("{", "["):
+                try:
+                    json.loads(text)
+                except ValueError as ex:
+                    return ("ERROR: variable '" + str(k) + "' holds text that looks like JSON but is not valid: "
+                            + str(ex) + ". A list variable must be ONE valid JSON array string - double quotes for"
+                            " keys and strings, no trailing commas, for example \"[{\\\"name\\\":\\\"Asha\\\"}]\"")
         self.profiles[name] = {str(k): str(v) for k, v in variables.items()}
         if self.emit is not None:
             self.emit("profile", {"profile": {"name": name, "variables": dict(self.profiles[name])},
@@ -281,12 +433,16 @@ class Builder:
         if problems:
             return "ERROR: not finished. " + " ".join(problems)
         if not self.warned and not self.targeted:
-            covered = {r["selector"] for r in self.rules}
-            missed = [f"{sel} ('{t[:30]}')" for sel, t in self.text_of.items() if sel not in covered and _is_numeric(t)][:8]
-            if missed:
-                self.warned = True
-                return ("NOT FINISHED YET: these elements show numbers but have no rule: " + "; ".join(missed)
-                        + ". Add rules for the ones the demo should change, then call finish again (it will be accepted).")
+            # If the scenario has api rules, the API injects data and numbers directly:
+            # don't nag the model that DOM numbers (like table cells or charts) lack individual text rules.
+            has_api_rule = any(r.get("type") == "api" for r in self.rules)
+            if not has_api_rule:
+                covered = {r["selector"] for r in self.rules}
+                missed = [f"{sel} ('{t[:30]}')" for sel, t in self.text_of.items() if sel not in covered and _is_numeric(t)][:8]
+                if missed:
+                    self.warned = True
+                    return ("NOT FINISHED YET: these elements show numbers but have no rule: " + "; ".join(missed)
+                            + ". Add rules for the ones the demo should change, then call finish again (it will be accepted).")
         self.summary = (summary or "")[:1000]
         self.finished = True
         return "OK: proposal complete"
@@ -327,7 +483,8 @@ def proposal_problems(rules, profiles, targeted=False):
     for pname, vars_ in profiles.items():
         for n in sorted(used):
             v = str(vars_.get(n, "")).replace(",", "")
-            plain = any(n == nm and not f for r in rules for nm, f in _placeholders(r["value"]))
+            # Only DOM text rules format numbers with | number. API JSON values keep raw numbers!
+            plain = any(n == nm and not f for r in rules if r["type"] != "api" for nm, f in _placeholders(r["value"]))
             if plain and v.isdigit() and int(v) >= 1000:
                 out.append(f"Variable '{n}' ({vars_[n]}) is a big number used without a filter: write {{{{{n} | number}}}} so it shows with separators.")
         missing = sorted(n for n in used if n not in vars_)
@@ -555,13 +712,61 @@ def _loop(client, system, tools, first_message, handlers, done, recorder=None, e
     return trace
 
 
-def run_builder(client, brief, snapshot=None, existing_selectors=(), research=False, host="", recorder=None, emit=None):
-    b = Builder(snapshot, existing_selectors, emit)
+def _shape(v, depth=0):
+    """Compact copy of a captured response for the build prompt: keys and types kept, one array
+    item shown, long strings cut. This is what teaches the model the real paths, so it stays small."""
+    if depth > 4:
+        return "…"
+    if isinstance(v, dict):
+        return {k: _shape(x, depth + 1) for k, x in list(v.items())[:20]}
+    if isinstance(v, list):
+        head = [_shape(v[0], depth + 1)] if v else []
+        if len(v) > 1:
+            head.append(f"…+{len(v) - 1} more items")
+        return head
+    if isinstance(v, str):
+        return v[:60] + ("…" if len(v) > 60 else "")
+    return v
+
+
+def _api_section(caps):
+    """The CAPTURED API RESPONSES block for the build prompt: one ready-to-copy selector pattern
+    (path only, so a query string in the real URL still matches) and the shape sample per endpoint."""
+    lines, seen = [], set()
+    for c in caps:
+        try:
+            u = urlparse(c["url"])
+        except ValueError:
+            continue
+        shown = u.path + ("?" + u.query if u.query else "")
+        if not shown or shown in seen:
+            continue
+        seen.add(shown)
+        count = f", {len(c['data'])} items" if isinstance(c["data"], list) else ""
+        lines.append(f"- selector: *{u.path}*  ({c['method']} {shown}{count})"
+                     + f"\n  sample: {_cap(json.dumps(_shape(c['data']), sort_keys=True, separators=(',', ':'), ensure_ascii=False), 600)}")
+    return "\n".join(lines)
+
+
+def run_builder(client, brief, snapshot=None, existing_selectors=(), research=False, host="",
+                api_caps=None, recorder=None, emit=None):
+    b = Builder(snapshot, existing_selectors, emit, api_caps)
     b.targeted = bool(TARGETED.search(brief or "")) and len(brief or "") < 400
     prompt = f"Brief from the presenter:\n{brief}\n\nTarget host: {host or '(any)'}\n"
     if b.targeted:
         prompt += "\nThis is a TARGETED edit: propose only the rule(s) and variable(s) needed for what was asked, nothing else.\n"
-    if snapshot:
+    if b.api_caps:
+        # small free-plan token limits: send fewer captured endpoints (override with AGENT_MAX_ENDPOINTS)
+        cap = int(os.getenv("AGENT_MAX_ENDPOINTS") or (8 if provider() == "groq" else 20))
+        section = _api_section(b.api_caps[:cap])
+        if section:
+            prompt += ("\nCAPTURED API RESPONSES - PRIMARY SOURCE for data, lists, tables and metrics loaded via API.\n"
+                       "MODE: API-ONLY. Propose ONLY rules of type 'api' that rewrite these endpoints. "
+                       "Do NOT propose DOM rules (text, hide, image, html). Do NOT use CSS selectors.\n"
+                       "Copy the selector pattern as written and use paths the sample shows (replace a whole list or extend "
+                       "it with invented items; the item count may differ).\n"
+                       + section + "\n")
+    elif snapshot:
         # small free-plan token limits: send fewer elements to Groq (override with AGENT_MAX_ELEMENTS)
         limit = int(os.getenv("AGENT_MAX_ELEMENTS") or (60 if provider() == "groq" else 150))
         known = {e["selector"] for e in snapshot[:limit]}
