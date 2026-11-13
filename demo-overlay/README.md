@@ -77,5 +77,5 @@ After switching profile, reload the page to refresh API data. The badge says so.
 
 See the backend README: history and restore, audit log, usage analytics, templates, import/export, invitations, login throttling, per-user default profile, and the AI assistant.
 
-* Popup "AI assistant": describe the demo, press **Build with AI** (it reads the page first), review, **Apply**. **Fix broken rules** finds rules whose selector no longer matches and proposes new ones.
+* Popup "AI assistant": describe the demo, press **Build with AI** (it reads the page first), review, **Apply**. Rules the assistant creates use host `*`, so they show on every URL, not just the scenario's app host (you can narrow a rule in the admin page later). The build streams: each rule and profile appears in the popup the moment the server validates it, so you can follow the assistant working (including where it fixes its own mistakes). If it stops early — step limit or a network error — whatever was built so far stays on screen, and if the server kept it as a proposal you can press **Apply anyway** to use just those rules.
 * Usage events (`page_view`, `profile_switch`, `demo_on`, `demo_off`, `sync`) are sent to your own server only, never to a third party.

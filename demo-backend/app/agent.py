@@ -8,6 +8,8 @@ Nothing is saved to a scenario until a person approves the proposal (see routers
 import json
 import os
 import re
+import time
+from datetime import datetime, timezone
 
 from app.formatting import FILTERS, FILTER_EXPR, PLAIN_EXPR
 from app.services import VALID_TYPES
@@ -52,6 +54,10 @@ class OpenAICompatClient:
         self.http = httpx.Client(base_url=base_url, timeout=timeout, transport=transport,
                                  headers={"Authorization": "Bearer " + api_key})
         self.messages = self
+        self.recorder = None              # set by the agent loop; reports retry attempts to the monitor
+
+    def set_recorder(self, rec):
+        self.recorder = rec
 
     @staticmethod
     def _convert_messages(system, messages):
@@ -92,9 +98,19 @@ class OpenAICompatClient:
                 wait = float(r.headers.get("retry-after", "") or 8)
             except ValueError:
                 wait = 8
-            self._sleep(min(max(wait, 1), 30))
+            wait = min(max(wait, 1), 30)
+            if self.recorder is not None:      # the monitor shows every retry attempt
+                self.recorder.attempt(429, "rate limited, waiting " + str(int(wait)) + "s", wait * 1000)
+            self._sleep(wait)
             r = self.http.post("/chat/completions", json=body)
         return r
+
+    @staticmethod
+    def _error_detail(r):
+        try:
+            return r.json()["error"]["message"]
+        except Exception:
+            return r.text[:200]
 
     def create(self, model, max_tokens, system, tools, messages, **_):
         from types import SimpleNamespace as NS
@@ -112,15 +128,14 @@ class OpenAICompatClient:
         for attempt in (1, 2):
             if r.status_code != 400 or not self._tool_failed(r):
                 break
+            if self.recorder is not None:
+                self.recorder.attempt(400, self._error_detail(r), 0)
             body = dict(body, temperature=0.1 if attempt == 1 else 0, parallel_tool_calls=False)
             r = self._post(body)
         if r.status_code >= 400:
-            try:
-                detail = r.json()["error"]["message"]
-            except Exception:
-                detail = r.text[:200]
-            raise RuntimeError(f"{r.status_code}: {detail}")
-        msg = r.json()["choices"][0]["message"]
+            raise RuntimeError(f"{r.status_code}: {self._error_detail(r)}")
+        data = r.json()
+        msg = data["choices"][0]["message"]
         blocks = []
         if msg.get("content"):
             blocks.append(NS(type="text", text=msg["content"]))
@@ -132,7 +147,10 @@ class OpenAICompatClient:
             except ValueError:
                 args = {}             # malformed arguments: the tool's validation will ask the model to retry
             blocks.append(NS(type="tool_use", id=call["id"], name=call["function"]["name"], input=args))
-        return NS(content=blocks, stop_reason="tool_use" if msg.get("tool_calls") else "end_turn")
+        usage = data.get("usage") or {}    # normalized to the Anthropic token names for the monitor
+        return NS(content=blocks, stop_reason="tool_use" if msg.get("tool_calls") else "end_turn",
+                  usage=NS(input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens")),
+                  model=data.get("model"))
 
 
 def get_client():
@@ -194,9 +212,13 @@ def _placeholders(value: str):
 
 
 class Builder:
-    """Holds the proposal while the agent works, and validates every tool call."""
+    """Holds the proposal while the agent works, and validates every tool call.
 
-    def __init__(self, snapshot, existing_selectors=()):
+    `emit(kind, payload)` is called the moment something is accepted, so a caller can
+    stream partial results instead of waiting for the whole loop to finish."""
+
+    def __init__(self, snapshot, existing_selectors=(), emit=None):
+        self.emit = emit
         self.snapshot = snapshot or []
         self.known = {e["selector"] for e in self.snapshot}
         self.existing = set(existing_selectors)
@@ -237,6 +259,8 @@ class Builder:
             return "ERROR: a rule for this selector and type was already proposed"
         self.rules.append({"selector": selector, "type": type, "value": value, "reason": (reason or "")[:300],
                            "exists": selector in self.existing})
+        if self.emit is not None:
+            self.emit("rule", {"rule": dict(self.rules[-1]), "count": len(self.rules)})
         return f"OK: rule {len(self.rules)} recorded"
 
     def propose_profile(self, name="", variables=None, **_):
@@ -247,6 +271,9 @@ class Builder:
         if bad:
             return f"ERROR: invalid variable names {bad}"
         self.profiles[name] = {str(k): str(v) for k, v in variables.items()}
+        if self.emit is not None:
+            self.emit("profile", {"profile": {"name": name, "variables": dict(self.profiles[name])},
+                                  "count": len(self.profiles)})
         return f"OK: profile '{name}' recorded with {len(variables)} variables"
 
     def finish(self, summary="", **_):
@@ -270,35 +297,45 @@ class Builder:
             out.append("No rules were proposed.")
         if not self.profiles:
             out.append("No profiles were proposed.")
-        used, filtered = set(), False
-        for r in self.rules:
-            if r["type"] == "api":
-                try:
-                    vals = [str(e.get("value", "")) for e in json.loads(r["value"])]
-                except Exception:
-                    vals = []
-                text = " ".join(vals)
-            else:
-                text = r["value"]
-            for n, f in _placeholders(text):
-                used.add(n)
-                filtered = filtered or bool(f)
-        for pname, vars_ in self.profiles.items():
-            for n in sorted(used):
-                v = str(vars_.get(n, "")).replace(",", "")
-                plain = any(n == nm and not f for r in self.rules for nm, f in _placeholders(r["value"]))
-                if plain and v.isdigit() and int(v) >= 1000:
-                    out.append(f"Variable '{n}' ({vars_[n]}) is a big number used without a filter: write {{{{{n} | number}}}} so it shows with separators.")
-            missing = sorted(n for n in used if n not in vars_)
-            if missing:
-                out.append(f"Profile '{pname}' is missing variables {missing}.")
-            if filtered and not self.targeted and not (RESERVED <= set(vars_)):   # a targeted edit merges into a profile that already has them
-                out.append(f"Profile '{pname}' needs _locale and _currency because rules use formatting filters.")
+        out.extend(proposal_problems(self.rules, self.profiles, self.targeted))
         return out
 
     def proposal(self):
         return {"rules": self.rules, "profiles": [{"name": k, "variables": v} for k, v in self.profiles.items()],
-                "summary": self.summary, "complete": self.finished}
+                "summary": self.summary, "complete": self.finished,
+                "problems": [] if self.finished else self.problems()}
+
+
+def proposal_problems(rules, profiles, targeted=False):
+    """Cross-checks a proposal (list of rule dicts, dict of name -> variables) that is NOT complete:
+    every variable a rule uses must exist in every profile, big numbers need a filter, and profiles
+    need _locale/_currency when filters are used. Also used to warn when a partial proposal is applied."""
+    out = []
+    used, filtered = set(), False
+    for r in rules:
+        if r["type"] == "api":
+            try:
+                vals = [str(e.get("value", "")) for e in json.loads(r["value"])]
+            except Exception:
+                vals = []
+            text = " ".join(vals)
+        else:
+            text = r["value"]
+        for n, f in _placeholders(text):
+            used.add(n)
+            filtered = filtered or bool(f)
+    for pname, vars_ in profiles.items():
+        for n in sorted(used):
+            v = str(vars_.get(n, "")).replace(",", "")
+            plain = any(n == nm and not f for r in rules for nm, f in _placeholders(r["value"]))
+            if plain and v.isdigit() and int(v) >= 1000:
+                out.append(f"Variable '{n}' ({vars_[n]}) is a big number used without a filter: write {{{{{n} | number}}}} so it shows with separators.")
+        missing = sorted(n for n in used if n not in vars_)
+        if missing:
+            out.append(f"Profile '{pname}' is missing variables {missing}.")
+        if filtered and not targeted and not (RESERVED <= set(vars_)):   # a targeted edit merges into a profile that already has them
+            out.append(f"Profile '{pname}' needs _locale and _currency because rules use formatting filters.")
+    return out
 
 
 TOOLS = [
@@ -320,16 +357,174 @@ def _text_of(content):
     return " ".join(getattr(b, "text", "") for b in content if getattr(b, "type", "") == "text").strip()
 
 
-def _loop(client, system, tools, first_message, handlers, done):
-    """The agent loop: call the model, run the tools it asks for, give it the results, repeat."""
+# ---------- call recording (real runtime data for the calls monitor) ----------
+
+def _cap(s, n=20000):
+    if isinstance(s, str) and len(s) > n:
+        return s[:n] + f" …(+{len(s) - n} chars truncated)"
+    return s
+
+
+def _jsonable(v, depth=0):
+    """JSON-safe copy of a payload that may contain SimpleNamespace message blocks (never raises)."""
+    if depth > 12:
+        return "…"
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if isinstance(v, str):
+        return _cap(v)
+    if isinstance(v, dict):
+        return {str(k): _jsonable(x, depth + 1) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonable(x, depth + 1) for x in v]
+    d = getattr(v, "__dict__", None)
+    if isinstance(d, dict):
+        return _jsonable(d, depth + 1)
+    return _cap(str(v))
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+class Recorder:
+    """Collects one record per LLM call and per tool call, in execution order.
+
+    Purely in-memory; the router attaches `on_change` to persist progress to the run row so the
+    monitor dashboard can follow a request live. Recording never breaks the agent.
+    """
+
+    def __init__(self):
+        self.calls = []
+        self.current = None            # the LLM call the client is waiting on (for retry attempts)
+        self.on_change = None
+
+    def _emit(self):
+        if self.on_change:
+            try:
+                self.on_change()
+            except Exception:
+                pass
+
+    # --- LLM calls ---
+    def llm_start(self, payload):
+        rec = {"i": len(self.calls) + 1, "type": "llm", "name": model_name(), "status": "running",
+               "started_at": _now(), "model": None, "input": payload, "output": None,
+               "tokens": None, "duration_ms": None, "attempts": [], "error": None}
+        self.calls.append(rec)
+        self.current = rec
+        self._emit()
+        return rec
+
+    def attempt(self, status_code, error, wait_ms):
+        """An HTTP retry inside the model client: 429 rate limit or a refused broken tool call."""
+        if self.current is not None:
+            self.current["attempts"].append({"status": status_code, "error": error, "wait_ms": round(wait_ms)})
+            self._emit()
+
+    def llm_end(self, rec, resp, duration_ms):
+        rec["status"] = "ok"
+        rec["duration_ms"] = round(duration_ms)
+        model = getattr(resp, "model", None)
+        if model:
+            rec["model"] = rec["name"] = model
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            i_tok, o_tok = getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None)
+            if i_tok is not None or o_tok is not None:
+                rec["tokens"] = {"input": i_tok, "output": o_tok, "total": (i_tok or 0) + (o_tok or 0)}
+        content = getattr(resp, "content", None) or []
+        tool_calls = []
+        for b in content:
+            t = getattr(b, "type", "")
+            if t in ("tool_use", "server_tool_use"):
+                tool_calls.append({"id": getattr(b, "id", None), "name": getattr(b, "name", None),
+                                   "arguments": _jsonable(getattr(b, "input", None) or {}),
+                                   "server": t == "server_tool_use"})
+        rec["output"] = {"text": _cap(_text_of(content)), "tool_calls": tool_calls,
+                         "stop_reason": getattr(resp, "stop_reason", None)}
+        self.current = None
+        self._emit()
+
+    def llm_error(self, rec, error, duration_ms):
+        rec["status"] = "error"
+        rec["error"] = error
+        rec["duration_ms"] = round(duration_ms)
+        self.current = None
+        self._emit()
+
+    # --- tool calls ---
+    def tool_start(self, llm_i, tool_use_id, name, args):
+        rec = {"i": len(self.calls) + 1, "type": "tool", "name": name, "status": "running",
+               "started_at": _now(), "llm_call": llm_i, "tool_use_id": tool_use_id,
+               "input": args, "output": None, "duration_ms": None, "error": None}
+        self.calls.append(rec)
+        self._emit()
+        return rec
+
+    def tool_end(self, rec, out, duration_ms):
+        rec["duration_ms"] = round(duration_ms)
+        rec["output"] = _cap(str(out))
+        # tool validation failures ("ERROR: ...") and unfinished finishes are failed calls the model retries
+        rec["status"] = "error" if rec["output"].startswith(("ERROR", "NOT FINISHED")) else "ok"
+        if rec["status"] == "error":
+            rec["error"] = rec["output"]
+        self._emit()
+
+    def tool_error(self, rec, error, duration_ms):
+        rec["status"] = "error"
+        rec["error"] = error
+        rec["output"] = error
+        rec["duration_ms"] = round(duration_ms)
+        self._emit()
+
+    # --- aggregates ---
+    def totals(self):
+        llms = [c for c in self.calls if c["type"] == "llm"]
+        tools = [c for c in self.calls if c["type"] == "tool"]
+        i_tok = sum(int(c["tokens"]["input"] or 0) for c in llms if c["tokens"])
+        o_tok = sum(int(c["tokens"]["output"] or 0) for c in llms if c["tokens"])
+        return {"llm_calls": len(llms), "tool_calls": len(tools),
+                "failed_calls": sum(1 for c in self.calls if c["status"] == "error"),
+                "input_tokens": i_tok, "output_tokens": o_tok, "total_tokens": i_tok + o_tok,
+                "duration_ms": sum(c["duration_ms"] or 0 for c in self.calls)}
+
+
+def _loop(client, system, tools, first_message, handlers, done, recorder=None, emit=None):
+    """The agent loop: call the model, run the tools it asks for, give it the results, repeat.
+    When a recorder is passed, every LLM call and tool call is captured for the calls monitor.
+    When `emit` is passed, the same moments are pushed to the caller live: partial results stream
+    out while the loop is still running instead of arriving only when it is over."""
     messages = [{"role": "user", "content": first_message}]
     trace = []
+    rec = recorder
+    if rec is not None:
+        hook = getattr(client, "set_recorder", None)   # lets the client report HTTP retry attempts
+        if hook is not None:
+            hook(rec)
     for step in range(MAX_STEPS):
-        resp = client.messages.create(model=model_name(), max_tokens=4096, system=system, tools=tools, messages=messages)
+        if emit is not None:
+            emit("step", {"step": step + 1})
+        if rec is None:
+            resp = client.messages.create(model=model_name(), max_tokens=4096, system=system, tools=tools, messages=messages)
+        else:
+            call = rec.llm_start({"system": system, "tools": [t["name"] for t in tools if "name" in t],
+                                  "messages": _jsonable(messages)})
+            t0 = time.perf_counter()
+            try:
+                resp = client.messages.create(model=model_name(), max_tokens=4096, system=system, tools=tools, messages=messages)
+            except Exception as e:
+                rec.llm_error(call, f"{type(e).__name__}: {e}", (time.perf_counter() - t0) * 1000)
+                raise
+            rec.llm_end(call, resp, (time.perf_counter() - t0) * 1000)
         messages.append({"role": "assistant", "content": resp.content})
         uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
         trace.append({"step": step + 1, "stop": resp.stop_reason, "text": _text_of(resp.content)[:300],
                       "tools": [u.name for u in uses]})
+        if emit is not None:      # what the model asked for this round, with the tokens it cost
+            emit("llm", {"n": call["i"] if rec is not None else None, "model": getattr(resp, "model", None),
+                         "text": _text_of(resp.content)[:300], "tools": [u.name for u in uses],
+                         "tokens": (call.get("tokens") if rec is not None else None)})
         if resp.stop_reason == "pause_turn":          # a server-side tool (web search) is still running
             continue
         if not uses:
@@ -337,7 +532,22 @@ def _loop(client, system, tools, first_message, handlers, done):
         results = []
         for u in uses:
             fn = handlers.get(u.name)
-            out = fn(**(u.input or {})) if fn else f"ERROR: unknown tool {u.name}"
+            tcall = (rec.tool_start(call["i"], getattr(u, "id", None), u.name, _jsonable(u.input or {}))
+                     if rec is not None else None)
+            t0 = time.perf_counter()
+            try:
+                out = fn(**(u.input or {})) if fn else f"ERROR: unknown tool {u.name}"
+            except Exception as e:                    # recorded for the monitor, then the run fails as before
+                if tcall is not None:
+                    rec.tool_error(tcall, f"{type(e).__name__}: {e}", (time.perf_counter() - t0) * 1000)
+                if emit is not None:
+                    emit("tool", {"name": u.name, "ok": False, "output": f"{type(e).__name__}: {e}"[:200]})
+                raise
+            if tcall is not None:
+                rec.tool_end(tcall, out, (time.perf_counter() - t0) * 1000)
+            if emit is not None:      # validation errors ("ERROR: ...") are visible live: the model self-corrects
+                emit("tool", {"name": u.name, "ok": not str(out).startswith(("ERROR", "NOT FINISHED")),
+                              "output": str(out)[:200]})
             results.append({"type": "tool_result", "tool_use_id": u.id, "content": str(out)})
         messages.append({"role": "user", "content": results})
         if done():
@@ -345,8 +555,8 @@ def _loop(client, system, tools, first_message, handlers, done):
     return trace
 
 
-def run_builder(client, brief, snapshot=None, existing_selectors=(), research=False, host=""):
-    b = Builder(snapshot, existing_selectors)
+def run_builder(client, brief, snapshot=None, existing_selectors=(), research=False, host="", recorder=None, emit=None):
+    b = Builder(snapshot, existing_selectors, emit)
     b.targeted = bool(TARGETED.search(brief or "")) and len(brief or "") < 400
     prompt = f"Brief from the presenter:\n{brief}\n\nTarget host: {host or '(any)'}\n"
     if b.targeted:
@@ -365,7 +575,7 @@ def run_builder(client, brief, snapshot=None, existing_selectors=(), research=Fa
         prompt += "\n\nResearch the prospect with web search first (public, company-level facts only) and reflect them in the profiles."
     tools = TOOLS + ([WEB_SEARCH] if research else [])
     handlers = {"propose_rule": b.propose_rule, "propose_profile": b.propose_profile, "finish": b.finish}
-    trace = _loop(client, SYSTEM, tools, prompt, handlers, lambda: b.finished)
+    trace = _loop(client, SYSTEM, tools, prompt, handlers, lambda: b.finished, recorder=recorder, emit=emit)
     return b.proposal(), trace
 
 
@@ -375,7 +585,7 @@ Pick the replacement from the candidate list that shows the same kind of informa
 Call choose_selector with a selector copied exactly from the candidates, or with selector "" if none fits."""
 
 
-def run_repair(client, rule, candidates):
+def run_repair(client, rule, candidates, recorder=None, emit=None):
     cands = {c["selector"] for c in candidates}
     picked = {}
 
@@ -391,5 +601,6 @@ def run_repair(client, rule, candidates):
     prompt = (f"Broken rule: selector={rule['selector']!r}, type={rule['type']}, value={rule['value']!r}\n\n"
               "Candidates (selector | tag | text):\n" + "\n".join(
                   f"{c['selector']} | {c.get('tag', '')} | {c.get('text', '')[:80]}" for c in candidates[:150]))
-    trace = _loop(client, REPAIR_SYSTEM, [tool], prompt, {"choose_selector": choose}, lambda: bool(picked))
+    trace = _loop(client, REPAIR_SYSTEM, [tool], prompt, {"choose_selector": choose}, lambda: bool(picked),
+                  recorder=recorder, emit=emit)
     return {"selector": picked.get("selector", ""), "reason": picked.get("reason", "")}, trace

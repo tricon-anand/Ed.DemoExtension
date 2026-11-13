@@ -134,22 +134,19 @@ async function handle(msg) {
       } catch (e) { /* the profile may be local only */ }
       return { ok: true };
     }
-    // AI assistant: the server proposes, a person approves
+    // AI assistant: the server proposes, a person approves.
+    // aiBuild is the one-shot fallback; the popup uses the /build/stream endpoint directly so
+    // partial results (rules/profiles) arrive while the agent is still working.
     case 'aiBuild': {
       const s = await server();
       const r = await call(`/agent/scenarios/${s.scenarioId}/build`, { method: 'POST',
-        body: { brief: msg.brief, snapshot: msg.snapshot || [], research: !!msg.research, host: msg.host || '' }, keepSession: true });
-      return { ok: true, run: r.data };
-    }
-    case 'aiRepair': {
-      const s = await server();
-      const r = await call(`/agent/scenarios/${s.scenarioId}/repair`, { method: 'POST',
-        body: { rule_id: msg.ruleId, candidates: msg.candidates }, keepSession: true });
+        body: { brief: msg.brief, snapshot: msg.snapshot || [], host: msg.host || '' }, keepSession: true });
       return { ok: true, run: r.data };
     }
     case 'aiApply': {
       const s = await server();
-      const r = await call(`/agent/runs/${msg.runId}/apply`, { method: 'POST', keepSession: true });
+      const r = await call(`/agent/runs/${msg.runId}/apply`, { method: 'POST',
+        body: msg.allowIncomplete ? { allow_incomplete: true } : undefined, keepSession: true });
       await loadScenario(s.scenarioId, true);
       return { ok: true, result: r.data };
     }

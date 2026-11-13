@@ -108,6 +108,15 @@ def test_proposal_changes_nothing_until_applied(client, org_a, fake_agent):
     assert "agent.apply" in {a["action"] for a in client.get("/audit", headers=org_a).json()}
 
 
+def test_ai_rules_apply_to_all_urls(client, org_a, fake_agent):
+    fake_agent(GOOD)
+    sid = mk(client, org_a)
+    run = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "x y z", "snapshot": SNAP}, headers=org_a).json()
+    client.post(f"/agent/runs/{run['run_id']}/apply", headers=org_a)
+    rules = client.get(f"/scenarios/{sid}/bundle", headers=org_a).json()["rules"]
+    assert rules and all(r["host"] == "*" for r in rules)      # "*" = shown on every URL, not just the target host
+
+
 def test_agent_isolation_and_roles(client, org_a, org_b, make_user, fake_agent):
     fake_agent(GOOD)
     sid = mk(client, org_a)
@@ -361,3 +370,90 @@ def test_apply_merges_variables_into_existing_profile(client, org_a, fake_agent)
     assert ap["variables_set"] == 1
     prof = [p for p in client.get(f"/scenarios/{sid}/profiles", headers=org_a).json() if p["name"] == "UK"][0]
     assert prof["variables"]["user_row1"] == "Zed" and prof["variables"]["rev"] == "1980"
+
+
+# ---------- streaming build: partial results arrive while the agent is still working ----------
+
+def read_stream(client, path, payload, headers):
+    """Collects (event, data) pairs from a server-sent event response."""
+    events = []
+    with client.stream("POST", path, json=payload, headers=headers) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        kind = "message"
+        for line in r.iter_lines():
+            if line.startswith("event: "):
+                kind = line[len("event: "):]
+            elif line.startswith("data: "):
+                events.append((kind, _json.loads(line[len("data: "):])))
+    return events
+
+
+def test_stream_shows_rules_as_they_are_validated(client, org_a, fake_agent):
+    # two rules and a profile, then a duplicate that is rejected live, then the model stops
+    # without ever calling finish: the partial proposal is still streamed and still applyable
+    fake_agent([[tool("propose_rule", selector="[data-testid='user']", type="text", value="{{user}}", reason="name"),
+                 tool("propose_rule", selector="[data-testid='revenue']", type="text", value="{{rev | currency}}", reason="n"),
+                 tool("propose_profile", name="UK", variables={"user": "Oliver", "rev": "1980", "_locale": "en_GB", "_currency": "GBP"}),
+                 tool("propose_rule", selector="[data-testid='user']", type="text", value="{{user}}")],
+                []])
+    sid = mk(client, org_a)
+    events = read_stream(client, f"/agent/scenarios/{sid}/build/stream", {"brief": "x y z", "snapshot": SNAP}, org_a)
+    kinds = [k for k, _ in events]
+    assert kinds[0] == "start" and kinds[-1] == "done"
+    assert kinds.count("rule") == 2 and "profile" in kinds and "step" in kinds and "llm" in kinds
+    # the first rule arrives before its tool call is reported, i.e. truly mid-run
+    assert kinds.index("rule") < kinds.index("done") - 1
+    assert any(k == "tool" and d["ok"] is False and d["name"] == "propose_rule" for k, d in events)
+    done = events[-1][1]
+    p = done["proposal"]
+    assert p["complete"] is False and len(p["rules"]) == 2 and len(p["profiles"]) == 1
+    assert p["problems"] == []                       # the partial proposal is internally consistent
+    # a partial proposal needs explicit consent to be applied
+    assert client.post(f"/agent/runs/{done['run_id']}/apply", headers=org_a).status_code == 422
+    ap = client.post(f"/agent/runs/{done['run_id']}/apply", json={"allow_incomplete": True}, headers=org_a)
+    assert ap.status_code == 200, ap.text
+    assert ap.json()["rules_added"] == 2 and ap.json()["incomplete"] is True and ap.json()["warnings"] == []
+    assert len(client.get(f"/scenarios/{sid}/rules", headers=org_a).json()) == 2
+    # (the apply above could only succeed because the worker thread had closed the run as "proposed")
+
+
+def test_stream_partial_apply_carries_warnings(client, org_a, fake_agent):
+    # the model stopped before finishing: the rule uses a variable the profile never got
+    fake_agent([[tool("propose_rule", selector="[data-testid='revenue']", type="text", value="{{missing_var}}"),
+                 tool("propose_profile", name="UK", variables={"other": "x"})], []])
+    sid = mk(client, org_a)
+    events = read_stream(client, f"/agent/scenarios/{sid}/build/stream", {"brief": "x y z", "snapshot": SNAP}, org_a)
+    done = events[-1][1]
+    assert done["proposal"]["complete"] is False
+    assert any("missing" in p for p in done["proposal"]["problems"])
+    ap = client.post(f"/agent/runs/{done['run_id']}/apply", json={"allow_incomplete": True}, headers=org_a)
+    assert ap.status_code == 200, ap.text
+    assert any("missing" in w for w in ap.json()["warnings"])
+
+
+def test_stream_reports_model_failure_as_an_error_event(client, org_a, monkeypatch):
+    class Boom:
+        messages = None
+        def create(self, **kw): raise RuntimeError("network down")
+    b = Boom(); b.messages = b
+    monkeypatch.setattr(agent_mod, "get_client", lambda: b)
+    sid = mk(client, org_a)
+    events = read_stream(client, f"/agent/scenarios/{sid}/build/stream", {"brief": "x y z"}, org_a)
+    assert [k for k, _ in events][-1] == "error"
+    assert "network down" in events[-1][1]["detail"]
+    runs = client.get("/agent/runs", headers=org_a).json()
+    assert runs[0]["status"] == "failed"             # the run is closed, never left "running"
+
+
+def test_stream_needs_an_api_key_too(client, org_a, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sid = mk(client, org_a)
+    r = client.post(f"/agent/scenarios/{sid}/build/stream", json={"brief": "x y z"}, headers=org_a)
+    assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+def test_proposal_problems_flags_missing_variables():
+    rules = [{"type": "text", "value": "{{a}}"}]
+    assert any("missing" in p for p in agent_mod.proposal_problems(rules, {"UK": {}}))
+    assert agent_mod.proposal_problems(rules, {"UK": {"a": "1"}}) == []

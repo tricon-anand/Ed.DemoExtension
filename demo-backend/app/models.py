@@ -144,7 +144,13 @@ class AgentRun(Base):
     user_email: Mapped[str] = mapped_column(String(320), default="")
     kind: Mapped[str] = mapped_column(String(20))            # build | repair
     brief: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(20), default="proposed")   # proposed | applied | failed
+    status: Mapped[str] = mapped_column(String(20), default="proposed")   # running | proposed | applied | failed
     proposal: Mapped[dict] = mapped_column(JSON, default=dict)
     trace: Mapped[list] = mapped_column(JSON, default=list)
+    # calls monitor: the full ordered log of LLM and tool calls with tokens, timings and errors
+    calls: Mapped[list] = mapped_column(JSON, default=list)
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    calls_failed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    model: Mapped[str] = mapped_column(String(120), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

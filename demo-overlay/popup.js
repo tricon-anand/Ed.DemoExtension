@@ -455,7 +455,7 @@ async function init() {
 }
 
 // ---------- AI assistant ----------
-let aiRuns = [];     // proposals waiting for approval
+let aiRuns = [];     // proposals waiting for approval: [{id, incomplete}]
 
 function aiMsg(text, bad) {
   const el = $('aiOut');
@@ -465,84 +465,139 @@ function aiMsg(text, bad) {
   el.style.wordBreak = 'break-word';
 }
 
+const tail = (sel) => (sel.length > 46 ? '...' + sel.slice(-43) : sel);
+
+function detailText(p) {
+  return p.rules.map((x) => `• ${tail(x.selector)} → ${x.value}`).concat(
+    p.profiles.map((x) => `• ${x.name}: ` + Object.entries(x.variables).filter(([k]) => k[0] !== '_').map(([k, v]) => `${k}=${v}`).join(', '))).join('\n');
+}
+
+// Reads the event stream of POST /agent/scenarios/{id}/build/stream and calls onEvent(kind, data)
+// for every event, so the UI can paint rules while the assistant is still working. The side panel
+// is an extension page with <all_urls> host permission, so it may call the API directly with the
+// same token the background worker stores in storage.
+async function aiStream(body, onEvent) {
+  const { auth } = await chrome.storage.local.get('auth');
+  if (!auth || !auth.token) throw new Error('Log in first (Server section at the top of the popup).');
+  const st = await send({ type: 'status' });
+  if (!st.scenarioId) throw new Error('Choose a scenario in the Server section and press Load / Sync first. Importing JSON does not count.');
+  const base = (st.apiBase || 'http://localhost:8001').replace(/\/+$/, '');
+  let res;
+  try {
+    res = await fetch(base + `/agent/scenarios/${st.scenarioId}/build/stream`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + auth.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error('Cannot reach server at ' + base);
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).detail; } catch (e) {}
+    throw new Error(typeof detail === 'string' && detail ? detail : 'Server error ' + res.status);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {            // one event per blank-line-separated block
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        let kind = 'message', data = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) kind = line.slice(6).trim();
+          else if (line.startsWith('data:')) data += line.slice(5).trim();
+        }
+        if (!data) continue;                              // keep-alive comment lines carry no data
+        let ev;
+        try { ev = JSON.parse(data); } catch (e) { continue; }
+        onEvent(kind, ev);
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {});                      // no dangling connection if a handler throws
+  }
+}
+
 function initAI() {
-  const busy = (on) => ['aiBuild', 'aiFix', 'aiApply'].forEach((id) => ($(id).disabled = on));
+  const busy = (on) => ['aiBuild', 'aiApply'].forEach((id) => ($(id).disabled = on));
 
   $('aiBuild').onclick = async () => {
     const brief = $('aiBrief').value.trim();
     if (brief.length < 3) return aiMsg('Describe the demo first', true);
     if (brief.length > 1500) return aiMsg('The description is too long (' + brief.length + ' characters). Use one or two sentences, not pasted data.', true);
     busy(true); aiRuns = []; $('aiApply').style.display = 'none';
+    // everything the assistant proposes is painted as soon as its validation passes, so a run that
+    // stops early still leaves the rules that were built so far on screen
+    const live = { rules: [], profiles: [], notes: [] };
+    let head = 'Asking the assistant... rules appear as they are proposed\n';
+    const paint = () => aiMsg((live.rules.length || live.profiles.length ? '' : head) + liveText(live));
     try {
       aiMsg('Reading the page...');
       const scan = await pageMessage({ type: 'scan' });
-      aiMsg('Asking the assistant... this can take a minute');
-      const r = await send({ type: 'aiBuild', brief, snapshot: scan.elements, research: $('aiResearch').checked, host: tabHost });
-      if (!r.ok) throw new Error(r.error);
-      const p = r.run.proposal;
-      if (!p.complete) throw new Error('The assistant did not finish. Try a clearer description.');
-      aiRuns = [r.run.run_id];
-      const tail = (sel) => (sel.length > 46 ? '...' + sel.slice(-43) : sel);
-      const detail = p.rules.map((x) => `• ${tail(x.selector)} → ${x.value}`).concat(
-        p.profiles.map((x) => `• ${x.name}: ` + Object.entries(x.variables).filter(([k]) => k[0] !== '_').map(([k, v]) => `${k}=${v}`).join(', ')));
-      aiMsg(`Proposal: ${p.rules.length} rule(s), ${p.profiles.length} profile(s). ${p.summary || ''}\n` + detail.join('\n'));
-      $('aiApply').style.display = '';
-    } catch (e) { aiMsg(e.message, true); } finally { busy(false); }
-  };
-
-  $('aiFix').onclick = async () => {
-    busy(true); aiRuns = []; $('aiApply').style.display = 'none';
-    try {
-      const h = await pageMessage({ type: 'health' });
-      const broken = h.broken.filter((r) => /^r\d+$/.test(String(r.id)));      // only rules that exist on the server
-      if (!h.broken.length) return aiMsg('All rules on this page match something.');
-      if (!broken.length) return aiMsg(h.broken.length + ' rule(s) match nothing, but they are not on the server, so the assistant cannot repair them.', true);
-      aiMsg('Reading the page...');
-      const scan = await pageMessage({ type: 'scan' });
-      const found = [];
-      for (const rule of broken) {
-        aiMsg(`Repairing ${found.length + 1} of ${broken.length}...`);
-        const r = await send({ type: 'aiRepair', ruleId: Number(String(rule.id).slice(1)), candidates: scan.elements });
-        if (!r.ok) throw new Error(r.error);
-        if (r.run.proposal.selector) found.push({ id: r.run.run_id, old: rule.selector, now: r.run.proposal.selector });
+      paint();
+      let final = null;
+      await aiStream({ brief, snapshot: scan.elements, host: tabHost }, (kind, ev) => {
+        if (kind === 'rule') { live.rules.push(ev.rule); paint(); }
+        else if (kind === 'profile') { live.profiles.push(ev.profile); paint(); }
+        else if (kind === 'tool' && ev.ok === false) { live.notes.push(ev.name + ': ' + ev.output); paint(); }  // the model self-corrects
+        else if (kind === 'step' && !live.rules.length && !live.profiles.length) { head = 'Thinking (step ' + ev.step + ')...\n'; paint(); }
+        else if (kind === 'done') final = ev;
+        else if (kind === 'error') throw new Error(ev.detail || 'The assistant failed.');
+      });
+      if (!final) throw new Error('The connection closed before the assistant finished.');
+      const p = final.proposal;
+      if (!p.rules.length && !p.profiles.length) throw new Error('The assistant proposed nothing. Try a clearer description.');
+      aiRuns = [{ id: final.run_id, incomplete: !p.complete }];
+      if (p.complete) {
+        aiMsg(`Proposal: ${p.rules.length} rule(s), ${p.profiles.length} profile(s). ${p.summary || ''}\n` + detailText(p));
+        $('aiApply').textContent = 'Apply';
+      } else {
+        const problems = Array.isArray(p.problems) && p.problems.length ? '\nWarnings: ' + p.problems.join(' ') : '';
+        aiMsg(`Partial proposal: ${p.rules.length} rule(s), ${p.profiles.length} profile(s). The assistant stopped before finishing.\n`
+          + detailText(p) + problems);
+        $('aiApply').textContent = `Apply anyway (${p.rules.length} rule${p.rules.length === 1 ? '' : 's'})`;
       }
-      if (!found.length) return aiMsg('The assistant found no good replacement for ' + broken.length + ' broken rule(s).', true);
-      aiRuns = found.map((f) => f.id);
-      aiMsg(found.map((f) => `${f.old}  ->  ${f.now}`).join('\n'));
-      $('aiOut').style.whiteSpace = 'pre-wrap';
       $('aiApply').style.display = '';
-    } catch (e) { aiMsg(e.message, true); } finally { busy(false); }
-  };
-
-  $('report').onclick = async () => {
-    try {
-      aiMsg('Collecting...');
-      const scan = await pageMessage({ type: 'scan' });
-      const list = (await pageMessage({ type: 'getCaptures' })).calls || [];
-      const calls = [];
-      for (const c of list.slice(0, 12)) {
-        const full = await pageMessage({ type: 'getCapture', id: c.id });
-        if (full && full.call) calls.push({ method: c.method, url: c.url, size: c.size, sample: String(full.call.text).slice(0, 2500) });
-      }
-      const report = { host: tabHost, url: activeTab && activeTab.url, elements: scan.elements, apiCalls: calls };
-      await navigator.clipboard.writeText(JSON.stringify(report, null, 1));
-      aiMsg(`Copied: ${scan.elements.length} elements and ${calls.length} API call(s). Paste it into the chat.`);
-    } catch (e) { aiMsg(e.message, true); }
+    } catch (e) {
+      // whatever was built before the stop is already on screen; add the reason it stopped
+      const built = live.rules.length || live.profiles.length;
+      aiMsg(liveText(live) + (built ? '\n\nStopped: ' + e.message : e.message), !built);
+    } finally { busy(false); }
   };
 
   $('aiApply').onclick = async () => {
     busy(true);
+    const warns = [];
     try {
-      for (const id of aiRuns) {
-        const r = await send({ type: 'aiApply', runId: id });
+      for (const run of aiRuns) {
+        const r = await send({ type: 'aiApply', runId: run.id, allowIncomplete: !!run.incomplete });
         if (!r.ok) throw new Error(r.error);
+        if (r.result && Array.isArray(r.result.warnings)) warns.push(...r.result.warnings);
       }
       aiRuns = [];
       $('aiApply').style.display = 'none';
       await load(); render();
-      aiMsg('Applied and synced. Reload the page to see it.');
+      aiMsg('Applied and synced. Reload the page to see it.'
+        + (warns.length ? '\nWarnings: ' + warns.join(' ') : ''));
     } catch (e) { aiMsg(e.message, true); } finally { busy(false); }
   };
+}
+
+// live view while the assistant works: what has been built so far, plus its self-corrections
+function liveText(live) {
+  const head = (live.rules.length || live.profiles.length)
+    ? 'So far: ' + live.rules.length + ' rule(s), ' + live.profiles.length + ' profile(s)\n' : '';
+  const items = live.rules.map((x) => `• ${tail(x.selector)} → ${x.value}`).concat(
+    live.profiles.map((x) => `• ${x.name}: ` + Object.entries(x.variables).filter(([k]) => k[0] !== '_').map(([k, v]) => `${k}=${v}`).join(', ')));
+  const notes = live.notes.length ? '\n' + live.notes.slice(-3).map((n) => '… ' + n).join('\n') : '';
+  return head + items.join('\n') + notes;
 }
 
 init();

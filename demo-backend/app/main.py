@@ -23,6 +23,7 @@ app.include_router(ops_router.router)
 app.include_router(agent_router.router)
 
 app.mount("/admin", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="admin")
+app.mount("/monitor", StaticFiles(directory=Path(__file__).parent / "static" / "monitor", html=True), name="monitor")
 
 
 @app.get("/health")

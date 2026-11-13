@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Calls Monitor</title>
+<style>
+  :root { --bg:#f3f4f6; --card:#fff; --ink:#111827; --mute:#6b7280; --line:#e5e7eb; --brand:#2563eb;
+          --bad:#dc2626; --good:#059669; --warn:#b45309; --tool:#6d28d9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:#1e293b; color:#fff; padding:10px 20px; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:16px; margin:0; flex:1; }
+  header a, header span { color:#cbd5e1; font-size:13px; }
+  header button { background:transparent; color:#fff; border-color:#64748b; }
+  #status { min-height:22px; padding:2px 20px; font-size:13px; }
+  #status.err { color:var(--bad); } #status.ok { color:var(--good); }
+  .layout { display:grid; grid-template-columns:340px 1fr; gap:16px; padding:0 20px 40px; align-items:start; }
+  @media (max-width:900px){ .layout { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mute); margin:0 0 10px; }
+  h3 { font-size:15px; margin:0; }
+  input[type=text], input[type=password] { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font:inherit; background:#fff; color:var(--ink); }
+  button { padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; background:#fff; color:var(--ink); font:inherit; cursor:pointer; }
+  button:hover { background:#f3f4f6; }
+  button.mini { padding:1px 7px; font-size:11px; color:var(--mute); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; min-width:20px; }
+  .mono { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .note { color:var(--mute); font-size:12px; margin-top:6px; }
+  .empty { color:var(--mute); padding:10px 4px; }
+  .login { max-width:340px; margin:60px auto; }
+  .login .field { margin-bottom:10px; }
+  .login input { width:100%; }
+  .field { display:flex; flex-direction:column; gap:3px; }
+  .field label { font-size:12px; font-weight:600; color:var(--mute); }
+  /* overview */
+  .stats { display:flex; gap:12px; flex-wrap:wrap; padding:16px 20px 0; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 18px; min-width:160px; }
+  .stat .v { font-size:22px; font-weight:700; line-height:1.2; }
+  .stat .l { font-size:11px; color:var(--mute); text-transform:uppercase; letter-spacing:.05em; }
+  .stat .s { font-size:12px; color:var(--mute); }
+  .stat.bad .v { color:var(--bad); }
+  /* request list */
+  ul.runs { list-style:none; margin:0; padding:0; max-height:70vh; overflow:auto; }
+  ul.runs li { padding:8px 10px; border-radius:6px; cursor:pointer; }
+  ul.runs li:hover { background:#f3f4f6; }
+  ul.runs li.sel { background:#eff6ff; }
+  ul.runs .top { display:flex; align-items:center; gap:8px; }
+  ul.runs .brief { color:var(--ink); font-size:13px; margin:3px 0 1px 17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  ul.runs .meta { color:var(--mute); font-size:11px; margin-left:17px; }
+  .dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
+  .dot.ok { background:var(--good); } .dot.bad { background:var(--bad); }
+  .dot.run { background:var(--warn); animation:pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity:.25; } }
+  .pill { border-radius:99px; font-size:11px; font-weight:600; padding:2px 10px; white-space:nowrap; }
+  .pill.ok { background:#ecfdf5; color:var(--good); }
+  .pill.applied { background:#eff6ff; color:#1d4ed8; }
+  .pill.bad { background:#fef2f2; color:var(--bad); }
+  .pill.run { background:#fffbeb; color:var(--warn); }
+  .kind { font-size:10px; font-weight:700; letter-spacing:.05em; color:var(--mute); border:1px solid var(--line); border-radius:4px; padding:0 5px; }
+  /* detail */
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+  .chip { background:#f8fafc; border:1px solid var(--line); border-radius:6px; padding:3px 9px; font-size:12px; color:var(--mute); }
+  .chip b { color:var(--ink); font-weight:600; }
+  .chip.bad b { color:var(--bad); }
+  .timeline { display:flex; flex-direction:column; }
+  .call { border:1px solid var(--line); border-radius:8px; margin-bottom:6px; background:var(--card); }
+  .call.failed { border-color:#fecaca; }
+  .call.tool { margin-left:30px; }
+  .call-h { display:flex; align-items:center; gap:8px; padding:7px 10px; cursor:pointer; }
+  .call-h:hover { background:#f9fafb; }
+  .idx { font-size:11px; color:var(--mute); font-family:ui-monospace,Consolas,monospace; flex:none; }
+  .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .call.failed .name { color:var(--bad); }
+  .from { font-size:11px; color:var(--tool); white-space:nowrap; }
+  .tok, .dur { font-size:11px; color:var(--mute); font-family:ui-monospace,Consolas,monospace; white-space:nowrap; }
+  .chev { color:var(--mute); font-size:11px; flex:none; }
+  .type { font-size:10px; font-weight:700; letter-spacing:.05em; border-radius:4px; padding:1px 6px; flex:none; }
+  .type.llm { background:#eff6ff; color:#1d4ed8; }
+  .type.tool { background:#f5f3ff; color:var(--tool); }
+  .call-b { border-top:1px dashed var(--line); padding:4px 10px 10px; }
+  .sect { margin-top:8px; }
+  .sect-h { display:flex; justify-content:space-between; align-items:center; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); margin-bottom:4px; }
+  pre { margin:0; background:#f8fafc; border:1px solid var(--line); border-radius:6px; padding:8px 10px;
+        font:12px/1.5 ui-monospace,Consolas,monospace; overflow:auto; max-height:320px;
+        white-space:pre-wrap; word-break:break-word; }
+  pre.err-pre { background:#fef2f2; border-color:#fecaca; color:var(--bad); }
+  .msg { display:flex; gap:8px; margin-bottom:6px; align-items:flex-start; }
+  .role { font-size:10px; font-weight:700; padding:2px 7px; border-radius:4px; background:#f1f5f9; color:#334155; flex:none; margin-top:2px; min-width:64px; text-align:center; }
+  .role.user { background:#eff6ff; color:#1d4ed8; }
+  .role.assistant { background:#f5f3ff; color:var(--tool); }
+  .role.tool { background:#f1f5f9; color:var(--mute); }
+  .msg-b { flex:1; min-width:0; }
+  .tuse { margin-bottom:6px; }
+  .tname { color:var(--tool); font-weight:600; }
+  .attempt { padding:3px 0; border-bottom:1px dotted var(--line); font-size:12px; }
+  .attempt:last-child { border-bottom:none; }
+  .legend { display:flex; gap:14px; font-size:11px; color:var(--mute); align-items:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Calls Monitor</h1>
+  <span id="who"></span>
+  <a href="/admin/" target="_blank" rel="noopener">Admin</a>
+  <button id="refreshBtn" title="Reload now">Refresh</button>
+  <button id="logoutBtn" style="display:none">Log out</button>
+</header>
+<div id="status"></div>
+<div id="app"></div>
+
+<script>
+'use strict';
+
+// ---------- tiny helpers (same patterns as /admin) ----------
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) {
+    if (c == null || c === false) continue;
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+
+const $ = (id) => document.getElementById(id);
+let statusTimer = null;
+function flash(msg, bad) {
+  const el = $('status');
+  el.textContent = msg || '';
+  el.className = msg ? (bad ? 'err' : 'ok') : '';
+  clearTimeout(statusTimer);
+  if (msg && !bad) statusTimer = setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
+const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  return ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(2) + ' s';
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function fmtFull(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+const pre = (txt, cls) => h('pre', { class: cls || '' }, String(txt == null ? '' : txt));
+
+// ---------- state ----------
+const S = {
+  token: store.get('adminToken'),     // same key as /admin: one login for both pages
+  user: null,
+  totals: null,
+  runs: [],
+  rid: null,                          // selected run id
+  detail: null,
+  open: new Set(),                    // indexes of expanded calls
+  err: null,
+};
+
+// ---------- API ----------
+async function api(path, opt = {}) {
+  const headers = {};
+  if (S.token) headers.Authorization = 'Bearer ' + S.token;
+  let body;
+  if (opt.json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(opt.json); }
+  if (opt.form) body = new URLSearchParams(opt.form);
+  const res = await fetch(path, { method: opt.method || 'GET', headers, body });
+  if (res.status === 401 && path !== '/auth/login') {
+    logout();
+    throw new Error('Session expired. Please log in again.');
+  }
+  if (!res.ok) {
+    let d = '';
+    try { d = (await res.json()).detail; } catch (e) {}
+    if (Array.isArray(d)) d = d.map((x) => x.msg).join('; ');
+    throw new Error(d || 'Server error ' + res.status);
+  }
+  return res.json();
+}
+
+async function run(fn) {
+  try { await fn(); } catch (e) { flash(e.message || String(e), true); }
+}
+
+function logout() {
+  S.token = null; S.user = null; S.totals = null; S.runs = []; S.rid = null; S.detail = null; S.open = new Set();
+  store.del('adminToken');
+  renderAll();
+}
+
+// ---------- data loading ----------
+async function loadDetail() {
+  if (!S.rid) return;
+  try { S.detail = await api('/agent/calls/' + S.rid); S.err = null; }
+  catch (e) { S.detail = null; flash(e.message || String(e), true); }
+  renderAll();
+}
+
+async function selectRun(id) {
+  S.rid = id; S.open = new Set(); S.detail = null;
+  renderAll();
+  await loadDetail();
+}
+
+async function refresh(silent) {
+  if (!S.user) return;
+  const d = await api('/agent/calls');
+  S.totals = d.totals; S.runs = d.runs; S.err = null;
+  if (!S.rid || !S.runs.some((r) => r.id === S.rid)) {
+    if (S.runs.length) { await selectRun(S.runs[0].id); return; }
+    S.rid = null; S.detail = null;
+  } else {
+    const sel = S.runs.find((r) => r.id === S.rid);
+    if (sel && sel.status === 'running' && S.detail) await loadDetail();   // live progress
+  }
+  if (!silent) flash('Refreshed');
+  renderAll();
+}
+
+async function afterLogin() {
+  S.user = await api('/auth/me');
+  if (!['admin', 'editor'].includes(S.user.role)) {
+    S.err = 'Your role (' + S.user.role + ') cannot view the calls monitor. Ask an admin for editor access.';
+  } else {
+    await refresh(true);
+  }
+  renderAll();
+}
+
+// ---------- rendering ----------
+function renderAll() {
+  const app = $('app');
+  app.replaceChildren();
+  $('who').textContent = S.user ? `${S.user.email} (${S.user.role})` : '';
+  $('logoutBtn').style.display = S.user ? '' : 'none';
+  if (!S.user) { app.append(loginView()); return; }
+  app.append(mainView());
+}
+
+function loginView() {
+  const box = h('div', { class: 'card login' });
+  const email = h('input', { type: 'text', placeholder: 'you@example.com', autocomplete: 'username' });
+  const pass = h('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
+  const go = () => run(async () => {
+    flash('Logging in...');
+    const t = await api('/auth/login', { method: 'POST', form: { username: email.value.trim(), password: pass.value } });
+    S.token = t.access_token;
+    store.set('adminToken', S.token);
+    flash('');
+    await afterLogin();
+  });
+  pass.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  box.append(
+    h('div', { class: 'field' }, h('label', null, 'Email'), email),
+    h('div', { class: 'field' }, h('label', null, 'Password'), pass),
+    h('button', { class: 'primary', onclick: go }, 'Log in'),
+    h('div', { class: 'note' }, 'Editors and admins only. The same account works on the Admin page.'));
+  return box;
+}
+
+function statCard(label, value, sub, bad) {
+  return h('div', { class: 'stat' + (bad ? ' bad' : '') },
+    h('div', { class: 'v' }, value),
+    h('div', { class: 'l' }, label),
+    sub ? h('div', { class: 's' }, sub) : null);
+}
+
+function statsRow() {
+  const t = S.totals;
+  if (!t) return h('div', { class: 'stats' }, statCard('Requests', '…'));
+  return h('div', { class: 'stats' },
+    statCard('Requests', fmt(t.requests), 'user requests to the agent'),
+    statCard('Total tokens', fmt(t.total_tokens), '↑ ' + fmt(t.input_tokens) + ' in · ↓ ' + fmt(t.output_tokens) + ' out'),
+    statCard('Failed calls', fmt(t.failed_calls), t.failed_calls > 0 ? 'across all requests' : 'none so far', t.failed_calls > 0));
+}
+
+const runState = (r) => ({ running: 'run', proposed: 'ok', applied: 'applied', failed: 'bad' }[r.status] || 'run');
+
+function runList() {
+  const ul = h('ul', { class: 'runs' });
+  if (!S.runs.length) {
+    ul.append(h('div', { class: 'empty' }, 'No requests yet. Use the AI assistant (admin page or extension) and every call appears here.'));
+    return ul;
+  }
+  S.runs.forEach((r) => {
+    const toks = (r.tokens_in || 0) + (r.tokens_out || 0);
+    const li = h('li', { class: r.id === S.rid ? 'sel' : '', onclick: () => run(() => selectRun(r.id)) },
+      h('div', { class: 'top' },
+        h('span', { class: 'dot ' + runState(r), title: r.status }),
+        h('span', { class: 'mono' }, '#' + r.id),
+        h('span', { class: 'kind' }, r.kind),
+        h('span', { class: 'grow' }),
+        toks > 0 ? h('span', { class: 'tok mono' }, '↑' + fmt(r.tokens_in) + ' ↓' + fmt(r.tokens_out)) : null,
+        h('span', { class: 'pill ' + runState(r) }, r.status)),
+      h('div', { class: 'brief' }, r.brief || '(no brief)'),
+      h('div', { class: 'meta' }, (r.user || '—') + ' · ' + fmtFull(r.created_at) + (r.model ? ' · ' + r.model : '')
+        + (r.calls_failed > 0 ? ' · ' + r.calls_failed + ' failed call' + (r.calls_failed > 1 ? 's' : '') : '')));
+    ul.append(li);
+  });
+  return ul;
+}
+
+function chips(d) {
+  const calls = d.calls || [];
+  const llms = calls.filter((c) => c.type === 'llm').length;
+  const tools = calls.filter((c) => c.type === 'tool').length;
+  const dur = calls.reduce((a, c) => a + (c.duration_ms || 0), 0);
+  return h('div', { class: 'chips' },
+    h('span', { class: 'chip' }, h('b', null, d.model || '—'), ' model'),
+    h('span', { class: 'chip' }, h('b', null, fmt(d.tokens_in)), ' tokens in'),
+    h('span', { class: 'chip' }, h('b', null, fmt(d.tokens_out)), ' tokens out'),
+    h('span', { class: 'chip' }, h('b', null, fmt((d.tokens_in || 0) + (d.tokens_out || 0))), ' total'),
+    h('span', { class: 'chip' }, h('b', null, llms), ' llm · ', h('b', null, tools), ' tool calls'),
+    h('span', { class: 'chip' + (d.calls_failed > 0 ? ' bad' : '') }, h('b', null, d.calls_failed), ' failed'),
+    h('span', { class: 'chip' }, h('b', null, fmtMs(dur)), ' total time'));
+}
+
+// --- call detail rendering ---
+function section(title, content, copyText) {
+  const btn = h('button', { class: 'mini', title: 'Copy to clipboard', onclick: (e) => {
+    e.stopPropagation();
+    if (navigator.clipboard) navigator.clipboard.writeText(copyText || '').then(() => flash('Copied'), () => {});
+  } }, 'copy');
+  return h('div', { class: 'sect' }, h('div', { class: 'sect-h' }, h('span', null, title), btn), content);
+}
+
+function toolUseView(t) {
+  return h('div', { class: 'tuse' },
+    h('div', { class: 'mono tname' }, '→ ' + (t.name || '?') + (t.server ? ' (server-side)' : '')),
+    pre(JSON.stringify(t.arguments || {}, null, 2)));
+}
+
+function msgView(m) {
+  const kids = [];
+  const c = m.content;
+  if (typeof c === 'string') kids.push(pre(c));
+  else if (Array.isArray(c)) {
+    c.forEach((b) => {
+      if (!b || typeof b !== 'object') { kids.push(pre(String(b))); return; }
+      if (b.type === 'text') kids.push(pre(b.text));
+      else if (b.type === 'tool_use') kids.push(toolUseView(b));
+      else if (b.type === 'tool_result') kids.push(h('div', { class: 'tuse' },
+        h('div', { class: 'mono tname' }, '↩ tool result'), pre(String(b.content == null ? '' : b.content))));
+      else kids.push(pre(JSON.stringify(b, null, 2)));
+    });
+  } else kids.push(pre(JSON.stringify(c, null, 2)));
+  return h('div', { class: 'msg' }, h('span', { class: 'role ' + m.role }, m.role), h('div', { class: 'msg-b' }, ...kids));
+}
+
+function callBody(c) {
+  const body = h('div', { class: 'call-b' });
+  if (c.type === 'llm') {
+    const inp = c.input || {};
+    if (inp.system != null) body.append(section('System prompt', pre(inp.system), inp.system));
+    const msgs = inp.messages || [];
+    if (msgs.length) body.append(section('Input messages (' + msgs.length + ')',
+      h('div', null, ...msgs.map(msgView)), JSON.stringify(msgs, null, 2)));
+    if (Array.isArray(inp.tools) && inp.tools.length) {
+      body.append(section('Tools offered', h('div', { class: 'note' }, inp.tools.join(', ')), inp.tools.join(', ')));
+    }
+    const out = c.output;
+    if (out) {
+      const parts = [];
+      if (out.text) parts.push(pre(out.text));
+      (out.tool_calls || []).forEach((t) => parts.push(toolUseView(t)));
+      if (out.stop_reason != null) parts.push(h('div', { class: 'note' }, 'stop_reason: ' + out.stop_reason));
+      if (parts.length) body.append(section('Output', h('div', null, ...parts), JSON.stringify(out, null, 2)));
+    }
+  } else {
+    body.append(section('Input (arguments)', pre(JSON.stringify(c.input, null, 2)), JSON.stringify(c.input, null, 2)));
+    if (c.output != null) body.append(section('Output', pre(c.output), c.output));
+  }
+  if ((c.attempts || []).length) {
+    const al = h('div', null, ...c.attempts.map((a, k) => h('div', { class: 'attempt' },
+      h('span', { class: 'mono' }, 'retry #' + (k + 1) + ' · HTTP ' + a.status),
+      h('span', { class: 'note' }, ' ' + (a.error || '') + (a.wait_ms ? ' · waited ' + fmtMs(a.wait_ms) : '')))));
+    body.append(section('Retries (' + c.attempts.length + ')', al, JSON.stringify(c.attempts, null, 2)));
+  }
+  if (c.error) body.append(section('Error', pre(c.error, 'err-pre'), c.error));
+  return body;
+}
+
+function callRow(c) {
+  const open = S.open.has(c.i);
+  const stateCls = c.status === 'ok' ? 'ok' : c.status === 'error' ? 'bad' : 'run';
+  const head = h('div', { class: 'call-h', onclick: () => { S.open.has(c.i) ? S.open.delete(c.i) : S.open.add(c.i); renderAll(); } },
+    h('span', { class: 'idx' }, '#' + c.i),
+    h('span', { class: 'type ' + c.type }, c.type === 'llm' ? 'LLM' : 'TOOL'),
+    h('span', { class: 'dot ' + stateCls, title: c.status }),
+    h('span', { class: 'name mono' }, c.name || '(unnamed)'),
+    c.type === 'tool' && c.llm_call ? h('span', { class: 'from' }, '↳ from LLM #' + c.llm_call) : null,
+    h('span', { class: 'grow' }),
+    c.type === 'llm' && c.tokens ? h('span', { class: 'tok mono' }, '↑' + fmt(c.tokens.input) + ' ↓' + fmt(c.tokens.output)) : null,
+    h('span', { class: 'dur mono' }, fmtMs(c.duration_ms)),
+    h('span', { class: 'chev' }, open ? '▾' : '▸'));
+  const row = h('div', { class: 'call' + (c.type === 'tool' ? ' tool' : '') + (c.status === 'error' ? ' failed' : '') }, head);
+  if (open) row.append(callBody(c));
+  return row;
+}
+
+function legacyView() {
+  const list = h('div', { class: 'timeline' });
+  (S.detail.trace || []).forEach((s, k) => {
+    list.append(h('div', { class: 'call' },
+      h('div', { class: 'call-h' },
+        h('span', { class: 'idx' }, '#' + (k + 1)),
+        h('span', { class: 'type llm' }, 'STEP'),
+        h('span', { class: 'name mono' }, (s.tools || []).join(', ') || '(no tool calls)'),
+        h('span', { class: 'grow' }),
+        h('span', { class: 'note' }, 'stop: ' + s.stop)),
+      h('div', { class: 'call-b' }, s.text ? pre(s.text) : h('div', { class: 'note' }, '(no text)'))));
+  });
+  return h('div', null,
+    h('div', { class: 'note' }, 'This request was recorded before call-level monitoring existed: only the compact step trace is available.'),
+    list);
+}
+
+function detailView() {
+  if (S.err) return h('div', { class: 'card' }, h('div', { class: 'empty' }, S.err));
+  if (!S.detail) return h('div', { class: 'card' }, h('div', { class: 'empty' }, S.runs.length ? 'Loading…' : 'Select a request on the left to see its complete execution history.'));
+  const d = S.detail;
+  const box = h('div', { class: 'card' });
+  box.append(h('div', { class: 'row' },
+    h('h3', null, 'Run #' + d.id + ' — ' + d.kind),
+    h('span', { class: 'pill ' + runState(d) }, d.status),
+    h('span', { class: 'grow' }),
+    h('span', { class: 'note' }, fmtFull(d.created_at))));
+  box.append(h('div', { class: 'note' }, d.brief || '(no brief)'));
+  box.append(h('div', { class: 'note' }, (d.user || '—') + ' · scenario ' + (d.scenario || d.scenario_id) + ' · ' + fmtTime(d.created_at)));
+  box.append(chips(d));
+  const calls = d.calls || [];
+  if (!calls.length && !(d.trace || []).length) {
+    box.append(h('div', { class: 'empty' }, 'No calls were recorded.'));
+  } else if (!calls.length) {
+    box.append(legacyView());
+  } else {
+    const legend = h('div', { class: 'legend', style: 'margin:0 0 8px' },
+      h('span', null, h('span', { class: 'dot ok' }), ' success'),
+      h('span', null, h('span', { class: 'dot bad' }), ' failed'),
+      h('span', null, h('span', { class: 'dot run' }), ' in progress'),
+      h('span', { class: 'grow' }),
+      h('span', null, 'click a call to inspect input and output'));
+    box.append(h('h2', { style: 'margin-top:14px' }, 'Timeline (' + calls.length + ' calls, in order)'), legend);
+    const tl = h('div', { class: 'timeline' }, ...calls.map(callRow));
+    box.append(tl);
+  }
+  return box;
+}
+
+function mainView() {
+  return h('div', null,
+    statsRow(),
+    S.err ? h('div', { class: 'card', style: 'margin:16px 20px' }, h('div', { class: 'empty' }, S.err))
+          : h('div', { class: 'layout' },
+              h('div', { class: 'card' }, h('h2', null, 'Requests'), runList()),
+              detailView()));
+}
+
+// ---------- wiring ----------
+$('refreshBtn').addEventListener('click', () => run(() => refresh(false)));
+$('logoutBtn').addEventListener('click', logout);
+setInterval(() => { if (S.user && !document.hidden) refresh(true).catch(() => {}); }, 3000);
+
+if (S.token) {
+  run(async () => { await afterLogin(); });
+} else {
+  renderAll();
+}
+</script>
+</body>
+</html>
