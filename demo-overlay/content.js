@@ -417,43 +417,58 @@
     openVars();
   }
 
-  async function openVars() {
-    await load();                    // the popup may have switched the profile while we were idle
-    if (!state.profiles[state.activeProfile] && Object.keys(state.profiles).length) {
-      state.activeProfile = Object.keys(state.profiles)[0];
-    }
+  function toast(msg) {
     const root = ensureUI();
-    const dlg = document.createElement('div');
-    dlg.className = 'vdlg';
-    dlg.innerHTML = `
-      <div class="vhead"><h3>Variables <select id="vprof"></select></h3>
-        <button id="vclose" title="Close (Esc)">x</button></div>
-      <div class="vhint">Click a value to edit it. Enter or clicking away saves, Esc cancels. A value can be any text, including a whole JSON list.</div>
-      <div class="vmiss" id="vmiss" style="display:none"></div>
-      <div class="vscroll"><table class="vtable">
-        <thead><tr><th style="width:170px">Variable</th><th>Value</th><th style="width:26px"></th></tr></thead>
-        <tbody id="vrows"></tbody></table></div>
-      <div class="vadd"><input class="k" id="vnewk" placeholder="new_name"><input id="vnewv" placeholder="value">
-        <button id="vadd" class="primary">Add</button></div>`;
-    root.appendChild(dlg);
-    varsDlg = dlg;
-    dlg.querySelector('#vclose').onclick = closeVars;
-    dlg.querySelector('#vprof').onchange = async (e) => {
-      await setProfile(e.target.value);      // saves, re-applies, reloads the page when API data changed
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.style.display = 'block';
+    tip.textContent = msg;
+    root.appendChild(tip);
+    setTimeout(() => tip.remove(), 5000);
+  }
+
+  async function openVars() {
+    try {
+      await load();                    // the popup may have switched the profile while we were idle
+      if (!state.profiles[state.activeProfile] && Object.keys(state.profiles).length) {
+        state.activeProfile = Object.keys(state.profiles)[0];
+      }
+      const root = ensureUI();
+      const dlg = document.createElement('div');
+      dlg.className = 'vdlg';
+      dlg.innerHTML = `
+        <div class="vhead"><h3>Variables <select id="vprof"></select></h3>
+          <button id="vclose" title="Close (Esc)">x</button></div>
+        <div class="vhint">Click a value to edit it. Enter or clicking away saves, Esc cancels. A value can be any text, including a whole JSON list.</div>
+        <div class="vmiss" id="vmiss" style="display:none"></div>
+        <div class="vscroll"><table class="vtable">
+          <thead><tr><th style="width:170px">Variable</th><th>Value</th><th style="width:26px"></th></tr></thead>
+          <tbody id="vrows"></tbody></table></div>
+        <div class="vadd"><input class="k" id="vnewk" placeholder="new_name"><input id="vnewv" placeholder="value">
+          <button id="vadd" class="primary">Add</button></div>`;
+      root.appendChild(dlg);
+      varsDlg = dlg;
+      dlg.querySelector('#vclose').onclick = closeVars;
+      dlg.querySelector('#vprof').onchange = async (e) => {
+        await setProfile(e.target.value);      // saves, re-applies, reloads the page when API data changed
+        refreshVars();
+      };
+      dlg.querySelector('#vadd').onclick = addVar;
+      for (const id of ['vnewk', 'vnewv']) {
+        dlg.querySelector('#' + id).addEventListener('keydown', (e) => { if (e.key === 'Enter') addVar(); });
+      }
+      varsKeyHandler = (e) => {
+        if (e.key !== 'Escape') return;
+        const ed = dlg.querySelector('textarea');
+        if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, second closes
+        else closeVars();
+      };
+      window.addEventListener('keydown', varsKeyHandler, true);
       refreshVars();
-    };
-    dlg.querySelector('#vadd').onclick = addVar;
-    for (const id of ['vnewk', 'vnewv']) {
-      dlg.querySelector('#' + id).addEventListener('keydown', (e) => { if (e.key === 'Enter') addVar(); });
+    } catch (e) {
+      console.error('[Demo Overlay] variables table:', e);
+      toast('Variables table failed: ' + e.message + ' — see the page console (F12)');
     }
-    varsKeyHandler = (e) => {
-      if (e.key !== 'Escape') return;
-      const ed = dlg.querySelector('textarea');
-      if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, second closes
-      else closeVars();
-    };
-    window.addEventListener('keydown', varsKeyHandler, true);
-    refreshVars();
   }
 
   function closeVars() {
