@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -62,12 +62,12 @@ class RuleOut(BaseModel):
 
 class ProfileIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    variables: dict[str, str] = Field(default_factory=dict)
+    variables: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProfileOut(BaseModel):
     id: int
     name: str
-    variables: dict[str, str]
+    variables: dict[str, Any]
 
     model_config = {"from_attributes": True}

@@ -96,6 +96,52 @@ async function pushRule(rule) {
   return loadScenario(server.scenarioId, true);
 }
 
+async function saveProfile({ name, variables, oldName }) {
+  const server = await store.get('server');
+  if (!server || !(await store.get('auth'))) return { ok: true, skipped: true };
+  const targetName = oldName || name;
+  let res = await call(`/scenarios/${server.scenarioId}/profiles/by-name/${encodeURIComponent(targetName)}`, {
+    method: 'PUT',
+    body: { name, variables: variables || {} },
+  });
+  if (res.status === 404) {
+    const listRes = await call(`/scenarios/${server.scenarioId}/profiles`);
+    const profiles = listRes.data || [];
+    const existing = profiles.find((p) => p.name === targetName);
+    if (existing) {
+      res = await call(`/profiles/${existing.id}`, {
+        method: 'PUT',
+        body: { name, variables: variables || {} },
+      });
+    } else {
+      res = await call(`/scenarios/${server.scenarioId}/profiles`, {
+        method: 'POST',
+        body: { name, variables: variables || {} },
+      });
+    }
+  }
+  if (!res.ok) return { ok: false, error: res.error || 'Failed to save profile' };
+  return loadScenario(server.scenarioId, true);
+}
+
+async function deleteProfile({ name }) {
+  const server = await store.get('server');
+  if (!server || !(await store.get('auth'))) return { ok: true, skipped: true };
+  let res = await call(`/scenarios/${server.scenarioId}/profiles/by-name/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+  if (res.status === 404) {
+    const listRes = await call(`/scenarios/${server.scenarioId}/profiles`);
+    const profiles = listRes.data || [];
+    const existing = profiles.find((p) => p.name === name);
+    if (existing) {
+      res = await call(`/profiles/${existing.id}`, { method: 'DELETE' });
+    }
+  }
+  if (!res.ok && res.status !== 404) return { ok: false, error: res.error || 'Failed to delete profile' };
+  return loadScenario(server.scenarioId, true);
+}
+
 async function server() {
   if (!(await store.get('auth'))) throw new Error('Log in first (Server section at the top of the popup).');
   const s = await store.get('server');
@@ -126,6 +172,8 @@ async function handle(msg) {
     }
     case 'loadScenario': return loadScenario(msg.scenarioId, !!msg.force);
     case 'pushRule': return pushRule(msg.rule);
+    case 'saveProfile': return saveProfile(msg);
+    case 'deleteProfile': return deleteProfile(msg);
     case 'track': await track(msg.event, null, msg); return { ok: true };
     case 'setMyProfile': {
       try {

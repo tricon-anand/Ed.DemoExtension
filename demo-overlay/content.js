@@ -311,14 +311,48 @@
         .vsub td { padding: 4px 8px; border-bottom: 1px solid #f3f4f6; font-family: ui-monospace, Consolas, monospace;
                    font-size: 11px; vertical-align: top; }
         .vsub tr:last-child td { border-bottom: 0; }
+        .vsubval { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-block; min-width: 16px; min-height: 14px; word-break: break-all; }
+        .vsubval:hover { background: #e0f2fe; color: #0284c7; }
+        .vsubedit { width: 100%; min-width: 60px; padding: 2px 4px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; border: 1px solid #2563eb; border-radius: 4px; outline: none; }
         .vchip { border: 1px solid #93c5fd; background: #eff6ff; color: #1d4ed8; border-radius: 999px;
                  padding: 1px 8px; font-size: 11px; cursor: pointer; font-family: ui-monospace, Consolas, monospace; }
         .vmore { font-size: 11px; color: #6b7280; margin-top: 4px; }
+        .rdlg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 840px;
+                max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; background: #fff;
+                color: #111827; border-radius: 12px; padding: 14px 16px; box-shadow: 0 20px 50px rgba(0,0,0,.35);
+                font-size: 13px; z-index: 2147483647; }
+        .rhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+        .rhead h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+        .rcontrols { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .rcontrols input[type=text] { flex: 1; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+        .rcontrols label { font-size: 12px; color: #4b5563; display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+        .rtable { width: 100%; border-collapse: collapse; }
+        .rtable th { text-align: left; font-size: 11px; color: #6b7280; padding: 6px 8px;
+                     border-bottom: 1px solid #e5e7eb; background: #f9fafb; position: sticky; top: 0; }
+        .rtable td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; font-size: 12px; }
+        .rtable tr:last-child td { border-bottom: 0; }
+        .rtable tr:hover td { background: #f9fafb; }
+        .rsel { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #374151; word-break: break-all; max-width: 260px; }
+        .rval { font-family: ui-monospace, Consolas, monospace; font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 4px; word-break: break-all; }
+        .rval:hover { background: #e0f2fe; color: #0284c7; }
+        .redit { width: 100%; padding: 4px 6px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; border: 1px solid #2563eb; border-radius: 4px; outline: none; }
+        .rtag { font-size: 10px; background: #eff6ff; color: #1d4ed8; padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase; }
+        .rtag.hide { background: #fef2f2; color: #b91c1c; }
+        .rtag.api { background: #fdf4ff; color: #a21caf; }
+        .rtag.image { background: #f0fdf4; color: #15803d; }
+        .rtag.html { background: #fffbeb; color: #b45309; }
+        .radd { display: flex; gap: 6px; padding: 10px 2px 0; border-top: 1px solid #e5e7eb; margin-top: 8px; }
+        .radd select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+        .radd input { min-width: 0; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+                      font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+        .radd input.rnewsel { flex: 0 0 280px; }
+        .radd input.rnewval { flex: 1; }
       </style>
       <div class="badge" id="badge"></div>
       <div class="bar" id="bar"><b>DEMO</b>
         <button id="tgl"></button><select id="prof"></select>
         <button id="vars" title="Variables table (Alt+Shift+V)">Variables</button>
+        <button id="rules" title="Rules table (Alt+Shift+R)">Rules</button>
         <button id="rld" title="Reload the page (clears anything typed)">Reload</button>
         <button id="hid" title="Hide toolbar (Alt+Shift+T)">x</button></div>`;
     bindToolbar(uiRoot);
@@ -390,6 +424,7 @@
     root.getElementById('tgl').onclick = toggleDemo;
     root.getElementById('prof').onchange = (e) => setProfile(e.target.value);
     root.getElementById('vars').onclick = toggleVars;
+    root.getElementById('rules').onclick = toggleRules;
     root.getElementById('rld').onclick = () => location.reload();
     root.getElementById('hid').onclick = toggleToolbar;
   }
@@ -455,6 +490,7 @@
 
   async function openVars() {
     try {
+      if (rulesDlg) closeRules();
       await load();                    // the popup may have switched the profile while we were idle
       if (!state.profiles[state.activeProfile] && Object.keys(state.profiles).length) {
         state.activeProfile = Object.keys(state.profiles)[0];
@@ -514,10 +550,14 @@
       }
       varsKeyHandler = (e) => {
         if (e.key !== 'Escape') return;
-        const ed = dlg.querySelector('textarea.vedit');
-        if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, next closes the pane, then the modal
-        else if (paneState) closePane();
-        else closeVars(true);
+        const subEd = dlg.querySelector('input.vsubedit');
+        if (subEd) { subEd.dataset.cancel = '1'; subEd.blur(); }
+        else {
+          const ed = dlg.querySelector('textarea.vedit');
+          if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, next closes the pane, then the modal
+          else if (paneState) closePane();
+          else closeVars(true);
+        }
       };
       window.addEventListener('keydown', varsKeyHandler, true);
       refreshVars();
@@ -555,10 +595,15 @@
     if (!varsDlg || !varsDraft) return;
     await save();                      // the draft object already sits in state.profiles
     const name = varsDraft.name;
+    const variables = Object.assign({}, state.profiles[name]);
     varsDraft = null;
     afterChange();                     // API data is filled once per page load: reload when it changed
     closeVars(false);
     toast('Profile "' + name + '" updated');
+    chrome.runtime
+      .sendMessage({ type: 'saveProfile', name, variables })
+      .then((r) => r && r.ok === false && console.warn('[Demo Overlay] profile not saved to server:', r.error))
+      .catch(() => {});
   }
 
   async function saveVarsAsNew() {
@@ -569,11 +614,16 @@
     state.profiles[name] = Object.assign({}, state.profiles[varsDraft.name]);   // the draft becomes the new profile
     state.profiles[varsDraft.name] = varsDraft.original;                        // the old profile keeps its values
     state.activeProfile = name;
+    const variables = Object.assign({}, state.profiles[name]);
     await save();
     varsDraft = null;
     afterChange();
     closeVars(false);
     toast('Saved as new profile "' + name + '"');
+    chrome.runtime
+      .sendMessage({ type: 'saveProfile', name, variables })
+      .then((r) => r && r.ok === false && console.warn('[Demo Overlay] profile not saved to server:', r.error))
+      .catch(() => {});
   }
 
   function discardVars() {
@@ -674,6 +724,375 @@
     if (!k) { varsDlg.querySelector('#vnewk').focus(); return; }
     await writeVar(k, v);
     refreshVars();
+  }
+
+  // ---------- rules table (in-page modal) ----------
+  let rulesDlg = null;
+  let rulesKeyHandler = null;
+  let rulesFilter = '';
+  let rulesSiteOnly = true;
+
+  function toggleRules() {
+    if (rulesDlg) { closeRules(); return; }
+    if (!IS_TOP) return;
+    openRules();
+  }
+
+  async function openRules() {
+    try {
+      if (varsDlg) closeVars(false);
+      await load();
+      const root = ensureUI();
+      if (rulesDlg) rulesDlg.remove();
+      const dlg = document.createElement('div');
+      dlg.className = 'rdlg';
+      dlg.innerHTML = `
+        <div class="rhead">
+          <h3>Rules <span id="rhost" style="font-size:12px;color:#6b7280;font-weight:normal"></span></h3>
+          <div style="display:flex;gap:6px">
+            <button id="rpick" class="primary" title="Pick an element on this page to create a rule">Pick element</button>
+            <button id="rclose" title="Close (Esc)">x</button>
+          </div>
+        </div>
+        <div class="rcontrols">
+          <input type="text" id="rfilter" placeholder="Filter rules by selector, value, or type...">
+          <label><input type="checkbox" id="rsiteonly" ${rulesSiteOnly ? 'checked' : ''}> This site only</label>
+        </div>
+        <div class="vscroll">
+          <table class="rtable">
+            <thead>
+              <tr>
+                <th style="width:36px;text-align:center">Active</th>
+                <th style="width:65px">Type</th>
+                <th style="width:260px">Target / Selector</th>
+                <th>Replacement value</th>
+                <th style="width:65px;text-align:center">Page</th>
+                <th style="width:28px"></th>
+              </tr>
+            </thead>
+            <tbody id="rrows"></tbody>
+          </table>
+        </div>
+        <div class="radd">
+          <select id="rnewtype" title="Rule action type">
+            <option value="text">text</option>
+            <option value="hide">hide</option>
+            <option value="image">image</option>
+            <option value="html">html</option>
+            <option value="api">api</option>
+          </select>
+          <input class="rnewsel" id="rnewsel" placeholder="CSS selector (e.g. h1, .total, #id)">
+          <input class="rnewval" id="rnewval" placeholder="Value (e.g. Acme Corp or {{company}})">
+          <button id="rnewadd" class="primary">Add rule</button>
+        </div>
+      `;
+      root.appendChild(dlg);
+      rulesDlg = dlg;
+
+      dlg.querySelector('#rhost').textContent = '· ' + HOST;
+      dlg.querySelector('#rclose').onclick = () => closeRules();
+      dlg.querySelector('#rpick').onclick = () => {
+        closeRules();
+        startPicker();
+      };
+
+      const filterInput = dlg.querySelector('#rfilter');
+      filterInput.value = rulesFilter;
+      filterInput.oninput = (e) => {
+        rulesFilter = e.target.value;
+        refreshRules();
+      };
+
+      const siteCheck = dlg.querySelector('#rsiteonly');
+      siteCheck.onchange = (e) => {
+        rulesSiteOnly = e.target.checked;
+        refreshRules();
+      };
+
+      const typeSel = dlg.querySelector('#rnewtype');
+      const selInput = dlg.querySelector('#rnewsel');
+      const valInput = dlg.querySelector('#rnewval');
+      const updatePlaceholders = () => {
+        const t = typeSel.value;
+        if (t === 'hide') {
+          selInput.placeholder = 'CSS selector to hide (e.g. .ad, #banner)';
+          valInput.placeholder = '(not needed for hide)';
+          valInput.disabled = true;
+          valInput.value = '';
+        } else if (t === 'api') {
+          selInput.placeholder = 'URL pattern (e.g. */api/students* or GET /api/*)';
+          valInput.placeholder = 'path = value or [{"path":"a","value":"b"}]';
+          valInput.disabled = false;
+        } else if (t === 'image') {
+          selInput.placeholder = 'CSS selector for img (e.g. img.logo, .avatar)';
+          valInput.placeholder = 'New image URL';
+          valInput.disabled = false;
+        } else if (t === 'html') {
+          selInput.placeholder = 'CSS selector (e.g. .card, div.content)';
+          valInput.placeholder = 'HTML replacement string';
+          valInput.disabled = false;
+        } else {
+          selInput.placeholder = 'CSS selector (e.g. h1, .price, #company)';
+          valInput.placeholder = 'Replacement text (e.g. Acme Corp or {{company}})';
+          valInput.disabled = false;
+        }
+      };
+      typeSel.onchange = updatePlaceholders;
+
+      const addManualRule = async () => {
+        const selector = selInput.value.trim();
+        if (!selector) { selInput.focus(); return; }
+        const type = typeSel.value;
+        let value = '';
+        if (type !== 'hide') {
+          value = type === 'api' ? formatApiRuleValue(valInput.value) : valInput.value;
+        }
+        const rule = {
+          id: 'r' + Date.now().toString(36),
+          host: (type === 'api' || !rulesSiteOnly) ? '*' : HOST,
+          selector,
+          type,
+          value,
+        };
+        state.rules.push(rule);
+        state.enabled = true;
+        await save();
+        apply();
+        if (type === 'api') postApi(true);
+        refreshRules();
+        chrome.runtime.sendMessage({ type: 'pushRule', rule }).catch(() => {});
+        toast('Rule added');
+        selInput.value = '';
+        valInput.value = '';
+        selInput.focus();
+      };
+      dlg.querySelector('#rnewadd').onclick = addManualRule;
+      selInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          if (typeSel.value === 'hide') addManualRule();
+          else valInput.focus();
+        }
+      });
+      valInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') addManualRule();
+      });
+
+      rulesKeyHandler = (e) => {
+        if (e.key !== 'Escape') return;
+        const ed = dlg.querySelector('input.redit');
+        if (ed) { ed.dataset.cancel = '1'; ed.blur(); }
+        else closeRules();
+      };
+      window.addEventListener('keydown', rulesKeyHandler, true);
+      refreshRules();
+    } catch (e) {
+      console.error('[Demo Overlay] rules table:', e);
+      toast('Rules table failed: ' + e.message);
+    }
+  }
+
+  function closeRules() {
+    if (!rulesDlg) return;
+    rulesDlg.remove();
+    rulesDlg = null;
+    if (rulesKeyHandler) {
+      window.removeEventListener('keydown', rulesKeyHandler, true);
+      rulesKeyHandler = null;
+    }
+  }
+
+  function refreshRules() {
+    if (!rulesDlg) return;
+    const rows = rulesDlg.querySelector('#rrows');
+    rows.replaceChildren();
+
+    const q = rulesFilter.trim().toLowerCase();
+    const filtered = state.rules.filter((rule) => {
+      if (rulesSiteOnly && rule.host && !hostMatches(rule.host)) return false;
+      if (!q) return true;
+      return (
+        (rule.selector || '').toLowerCase().includes(q) ||
+        (rule.value || '').toLowerCase().includes(q) ||
+        (rule.type || '').toLowerCase().includes(q) ||
+        (rule.host || '').toLowerCase().includes(q)
+      );
+    });
+
+    if (!filtered.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 6;
+      td.style.cssText = 'color:#6b7280;font-size:12px;padding:12px;text-align:center;';
+      td.textContent = state.rules.length
+        ? 'No rules match the current filter.'
+        : 'No rules created yet. Click "Pick element" to add one.';
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+
+    for (const rule of filtered) {
+      const tr = document.createElement('tr');
+
+      // 1. Active checkbox
+      const tdActive = document.createElement('td');
+      tdActive.style.textAlign = 'center';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = !rule.disabled;
+      chk.title = rule.disabled ? 'Enable rule' : 'Disable rule';
+      chk.onchange = async () => {
+        rule.disabled = !chk.checked;
+        await save();
+        apply();
+        refreshRules();
+      };
+      tdActive.appendChild(chk);
+
+      // 2. Type tag
+      const tdType = document.createElement('td');
+      const tag = document.createElement('span');
+      tag.className = 'rtag ' + (rule.type || '');
+      tag.textContent = rule.type || 'text';
+      tdType.appendChild(tag);
+
+      // 3. Target / Selector
+      const tdSel = document.createElement('td');
+      const selDiv = document.createElement('div');
+      selDiv.className = 'rsel';
+      selDiv.textContent = rule.selector || '';
+      selDiv.title = (rule.host ? '[' + rule.host + '] ' : '') + (rule.selector || '');
+      tdSel.appendChild(selDiv);
+
+      // 4. Replacement Value
+      const tdVal = document.createElement('td');
+      if (rule.type === 'hide') {
+        const span = document.createElement('span');
+        span.style.color = '#9ca3af';
+        span.style.fontStyle = 'italic';
+        span.textContent = '(element hidden)';
+        tdVal.appendChild(span);
+      } else {
+        const valDiv = document.createElement('div');
+        valDiv.className = 'rval';
+        valDiv.textContent = rule.value === '' ? '""' : (rule.value || '');
+        valDiv.title = 'Click to edit value';
+        valDiv.onclick = () => editRuleValue(valDiv, rule);
+        tdVal.appendChild(valDiv);
+      }
+
+      // 5. Page Match count
+      const tdMatch = document.createElement('td');
+      tdMatch.style.textAlign = 'center';
+      if (rule.type === 'api') {
+        tdMatch.innerHTML = '<span style="color:#a21caf;font-size:11px">API</span>';
+      } else if (rule.disabled) {
+        tdMatch.innerHTML = '<span style="color:#9ca3af;font-size:11px">—</span>';
+      } else {
+        let count = 0;
+        try { count = queryAll(rule.selector).length; } catch (e) { count = 0; }
+        if (count > 0) {
+          tdMatch.innerHTML = `<span style="color:#059669;font-weight:600;font-size:11px" title="${count} element(s) found on page">✓ ${count}</span>`;
+        } else {
+          tdMatch.innerHTML = `<span style="color:#dc2626;font-size:11px" title="No elements found on page">⚠ 0</span>`;
+        }
+      }
+
+      // 6. Delete
+      const tdDel = document.createElement('td');
+      const delBtn = document.createElement('button');
+      delBtn.className = 'vdel';
+      delBtn.textContent = '✕';
+      delBtn.title = 'Delete rule';
+      delBtn.onclick = async () => {
+        state.rules = state.rules.filter((r) => r !== rule);
+        await save();
+        apply();
+        refreshRules();
+        toast('Rule deleted');
+      };
+      tdDel.appendChild(delBtn);
+
+      tr.append(tdActive, tdType, tdSel, tdVal, tdMatch, tdDel);
+      rows.appendChild(tr);
+    }
+  }
+
+  function editRuleValue(cell, rule) {
+    const td = cell.parentElement;
+    const inp = document.createElement('input');
+    inp.className = 'redit';
+    inp.type = 'text';
+    inp.value = rule.value || '';
+    td.replaceChildren(inp);
+    inp.focus();
+    inp.select();
+
+    const finish = async (commit) => {
+      if (!commit || inp.dataset.cancel === '1') {
+        refreshRules();
+        return;
+      }
+      if (inp.value === (rule.value || '')) {
+        refreshRules();
+        return;
+      }
+      rule.value = inp.value;
+      await save();
+      apply();
+      toast('Rule updated');
+      refreshRules();
+    };
+
+    inp.onblur = () => finish(true);
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        inp.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        inp.dataset.cancel = '1';
+        inp.blur();
+      }
+    };
+  }
+
+  function formatApiRuleValue(val) {
+    const trimmed = String(val || '').trim();
+    if (!trimmed) return '[]';
+    if (trimmed.startsWith('[')) {
+      try {
+        const arr = JSON.parse(trimmed);
+        if (Array.isArray(arr)) return trimmed;
+      } catch (e) {}
+    }
+    if (trimmed.startsWith('{')) {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj && typeof obj === 'object') {
+          if (typeof obj.path === 'string') return JSON.stringify([obj]);
+          const list = Object.entries(obj).map(([path, v]) => ({
+            path,
+            value: typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
+          }));
+          return JSON.stringify(list);
+        }
+      } catch (e) {}
+    }
+    // Lines of "path = value" or "path: value"
+    const lines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean);
+    const edits = [];
+    for (const line of lines) {
+      const eq = line.indexOf('=') !== -1 ? line.indexOf('=') : line.indexOf(':');
+      if (eq > 0) {
+        const path = line.slice(0, eq).trim();
+        const v = line.slice(eq + 1).trim();
+        edits.push({ path, value: v });
+      } else {
+        edits.push({ path: line, value: '' });
+      }
+    }
+    return edits.length ? JSON.stringify(edits) : '[]';
   }
 
   // ---------- JSON values: a table pane instead of a text editor ----------
@@ -883,8 +1302,85 @@
       chip.onclick = () => { paneState.path = childPath; paneState.mode = 'table'; renderPane(); };
       td.appendChild(chip);
     } else {
-      td.textContent = v === '' ? '""' : String(v);
+      const cell = document.createElement('div');
+      cell.className = 'vsubval';
+      cell.textContent = v === '' ? '""' : String(v);
+      cell.title = 'Click to edit';
+      cell.onclick = (e) => {
+        e.stopPropagation();
+        editSubValue(cell, v, childPath);
+      };
+      td.appendChild(cell);
     }
+  }
+
+  function editSubValue(cell, originalVal, childPath) {
+    const td = cell.parentElement;
+    const inp = document.createElement('input');
+    inp.className = 'vsubedit';
+    inp.type = 'text';
+    inp.value = originalVal === null ? 'null' : String(originalVal ?? '');
+    td.replaceChildren(inp);
+    inp.focus();
+    inp.select();
+
+    const finish = async (commit) => {
+      if (!paneState) return;
+      if (!commit || inp.dataset.cancel === '1') {
+        renderPane();
+        return;
+      }
+      const raw = inp.value;
+      if (raw === (originalVal === null ? 'null' : String(originalVal ?? ''))) {
+        renderPane();
+        return;
+      }
+      let parsed;
+      const trimmed = raw.trim();
+      if (typeof originalVal === 'number' && !isNaN(Number(trimmed)) && trimmed !== '') {
+        parsed = Number(trimmed);
+      } else if (typeof originalVal === 'boolean' && (trimmed === 'true' || trimmed === 'false')) {
+        parsed = trimmed === 'true';
+      } else if (originalVal === null && trimmed === 'null') {
+        parsed = null;
+      } else if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try { parsed = JSON.parse(trimmed); } catch (e) { parsed = raw; }
+      } else {
+        parsed = raw;
+      }
+
+      let target = paneState.root;
+      for (let i = 0; i < childPath.length - 1; i++) {
+        target = target[childPath[i]];
+      }
+      target[childPath[childPath.length - 1]] = parsed;
+
+      await writeVar(paneState.key, JSON.stringify(paneState.root));
+
+      if (varsDlg) {
+        const nameTd = [...varsDlg.querySelectorAll('.vname')].find((el) => el.dataset.key === paneState.key);
+        if (nameTd && nameTd.parentElement) {
+          const valDiv = nameTd.parentElement.querySelector('.vval');
+          if (valDiv) {
+            valDiv.textContent = jsonSummary(paneState.root);
+            valDiv.title = JSON.stringify(paneState.root).slice(0, 400);
+          }
+        }
+      }
+      renderPane();
+    };
+
+    inp.onblur = () => finish(true);
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        inp.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        inp.dataset.cancel = '1';
+        inp.blur();
+      }
+    };
   }
 
   function renderRawEditor(body, key) {
@@ -1230,9 +1726,13 @@
       else if (msg.name === 'next-profile') nextProfile();
       else if (msg.name === 'toggle-toolbar') toggleToolbar();
       else if (msg.name === 'toggle-vars') toggleVars();
+      else if (msg.name === 'toggle-rules') toggleRules();
       sendResponse({ ok: true });
     } else if (msg && msg.type === 'openVars') {
       openVars();
+      sendResponse({ ok: true });
+    } else if (msg && msg.type === 'openRules') {
+      openRules();
       sendResponse({ ok: true });
     } else if (msg && msg.type === 'scan') {
       sendResponse({ ok: true, elements: scanPage() });

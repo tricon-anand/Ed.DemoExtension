@@ -120,6 +120,37 @@ def delete_profile(profile_id: int, db: Session = Depends(get_db), user=Depends(
     db.commit()
 
 
+@router.put("/scenarios/{scenario_id}/profiles/by-name/{name:path}", response_model=ProfileOut)
+def save_profile_by_name(scenario_id: int, name: str, body: ProfileIn, db: Session = Depends(get_db), user=Depends(editor)):
+    sc = get_org_scenario(db, user, scenario_id)
+    prof = next((p for p in sc.profiles if p.name == name), None)
+    if prof:
+        prof.name = body.name.strip()
+        prof.variables = body.variables
+        action = "profile.update"
+    else:
+        if any(p.name == body.name.strip() for p in sc.profiles):
+            raise HTTPException(status_code=409, detail="Profile name already exists")
+        prof = models.Profile(scenario_id=sc.id, name=body.name.strip(), variables=body.variables)
+        db.add(prof)
+        action = "profile.create"
+    touch(db, user, sc, action, prof.name)
+    db.commit()
+    db.refresh(prof)
+    return prof
+
+
+@router.delete("/scenarios/{scenario_id}/profiles/by-name/{name:path}", status_code=204)
+def delete_profile_by_name(scenario_id: int, name: str, db: Session = Depends(get_db), user=Depends(editor)):
+    sc = get_org_scenario(db, user, scenario_id)
+    prof = next((p for p in sc.profiles if p.name == name), None)
+    if not prof:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    db.delete(prof)
+    touch(db, user, sc, "profile.delete", prof.name)
+    db.commit()
+
+
 # ---------- the bundle the extension downloads ----------
 @router.get("/scenarios/{scenario_id}/bundle")
 def bundle(

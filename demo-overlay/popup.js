@@ -203,6 +203,43 @@ function shortValue(v) {
   return s.length > 70 ? s.slice(0, 67) + '...' : s;
 }
 
+function formatApiRuleValue(val) {
+  const trimmed = String(val || '').trim();
+  if (!trimmed) return '[]';
+  if (trimmed.startsWith('[')) {
+    try {
+      const arr = JSON.parse(trimmed);
+      if (Array.isArray(arr)) return trimmed;
+    } catch (e) {}
+  }
+  if (trimmed.startsWith('{')) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj === 'object') {
+        if (typeof obj.path === 'string') return JSON.stringify([obj]);
+        const list = Object.entries(obj).map(([path, v]) => ({
+          path,
+          value: typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
+        }));
+        return JSON.stringify(list);
+      }
+    } catch (e) {}
+  }
+  const lines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean);
+  const edits = [];
+  for (const line of lines) {
+    const eq = line.indexOf('=') !== -1 ? line.indexOf('=') : line.indexOf(':');
+    if (eq > 0) {
+      const path = line.slice(0, eq).trim();
+      const v = line.slice(eq + 1).trim();
+      edits.push({ path, value: v });
+    } else {
+      edits.push({ path: line, value: '' });
+    }
+  }
+  return edits.length ? JSON.stringify(edits) : '[]';
+}
+
 async function pageMessage(msg) {
   if (!activeTab) throw new Error('No active tab');
   try {
@@ -394,15 +431,20 @@ async function init() {
     state.activeProfile = name;
     await save();
     render();
+    send({ type: 'saveProfile', name, variables: state.profiles[name] })
+      .then((r) => r && r.ok === false && flash('Not saved to server: ' + r.error));
   };
 
   $('delProfile').onclick = async () => {
     if (Object.keys(state.profiles).length < 2) return flash('Keep at least one profile');
     if (!confirm('Delete profile "' + state.activeProfile + '"?')) return;
-    delete state.profiles[state.activeProfile];
+    const deleted = state.activeProfile;
+    delete state.profiles[deleted];
     state.activeProfile = Object.keys(state.profiles)[0];
     await save();
     render();
+    send({ type: 'deleteProfile', name: deleted })
+      .then((r) => r && r.ok === false && flash('Not deleted on server: ' + r.error));
   };
 
   // Edit opens the variables table as a modal over the whole page (content.js), where edits are
@@ -414,6 +456,98 @@ async function init() {
       flash(e.message);
     }
   };
+
+  const openRulesPage = $('openRulesPageBtn');
+  if (openRulesPage) {
+    openRulesPage.onclick = async () => {
+      try {
+        await pageMessage({ type: 'openRules' });
+      } catch (e) {
+        flash(e.message);
+      }
+    };
+  }
+
+  const toggleRuleBtn = $('toggleAddRuleBtn');
+  const addRuleBox = $('addRuleBox');
+  const pNewType = $('pNewType');
+  const pNewSel = $('pNewSel');
+  const pNewVal = $('pNewVal');
+  const pNewAddBtn = $('pNewAddBtn');
+
+  if (toggleRuleBtn && addRuleBox) {
+    toggleRuleBtn.onclick = () => {
+      const isOpen = addRuleBox.style.display !== 'none';
+      addRuleBox.style.display = isOpen ? 'none' : 'block';
+      toggleRuleBtn.textContent = isOpen ? '+ Add rule' : '− Cancel';
+      if (!isOpen) pNewSel.focus();
+    };
+
+    const updatePPlaceholders = () => {
+      const t = pNewType.value;
+      if (t === 'hide') {
+        pNewSel.placeholder = 'CSS selector to hide (e.g. .ad, #banner)';
+        pNewVal.placeholder = '(not needed for hide)';
+        pNewVal.disabled = true;
+        pNewVal.value = '';
+      } else if (t === 'api') {
+        pNewSel.placeholder = 'URL pattern (e.g. */api/students* or GET /api/*)';
+        pNewVal.placeholder = 'path = value or [{"path":"a","value":"b"}]';
+        pNewVal.disabled = false;
+      } else if (t === 'image') {
+        pNewSel.placeholder = 'CSS selector for img (e.g. img.logo, .avatar)';
+        pNewVal.placeholder = 'New image URL';
+        pNewVal.disabled = false;
+      } else if (t === 'html') {
+        pNewSel.placeholder = 'CSS selector (e.g. .card, div.content)';
+        pNewVal.placeholder = 'HTML replacement string';
+        pNewVal.disabled = false;
+      } else {
+        pNewSel.placeholder = 'CSS selector (e.g. h1, .price, #company)';
+        pNewVal.placeholder = 'Replacement text (e.g. Acme Corp or {{company}})';
+        pNewVal.disabled = false;
+      }
+    };
+    pNewType.onchange = updatePPlaceholders;
+
+    const addManualRulePopup = async () => {
+      const selector = pNewSel.value.trim();
+      if (!selector) { pNewSel.focus(); return; }
+      const type = pNewType.value;
+      let value = '';
+      if (type !== 'hide') {
+        value = type === 'api' ? formatApiRuleValue(pNewVal.value) : pNewVal.value;
+      }
+      const rule = {
+        id: 'r' + Date.now().toString(36),
+        host: type === 'api' ? '*' : (tabHost || '*'),
+        selector,
+        type,
+        value,
+      };
+      state.rules.push(rule);
+      state.enabled = true;
+      await save();
+      render();
+      send({ type: 'pushRule', rule })
+        .then((r) => r && r.ok === false && flash('Not saved to server: ' + r.error));
+      flash('Rule added');
+      pNewSel.value = '';
+      pNewVal.value = '';
+      addRuleBox.style.display = 'none';
+      toggleRuleBtn.textContent = '+ Add rule';
+    };
+    pNewAddBtn.onclick = addManualRulePopup;
+    pNewSel.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (pNewType.value === 'hide') addManualRulePopup();
+        else pNewVal.focus();
+      }
+    });
+    pNewVal.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addManualRulePopup();
+    });
+  }
 
   $('settingsBtn').onclick = () => { settingsOpen = !settingsOpen; renderServer(); };
   $('backBtn').onclick = () => { settingsOpen = false; renderServer(); };

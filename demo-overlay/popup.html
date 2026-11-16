@@ -7,7 +7,7 @@
   body { min-width: 300px; margin: 0; padding: 14px; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; }
   h1 { font-size: 15px; margin: 0; }
   .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .top-actions { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; }
   .switch { display: flex; align-items: center; gap: 8px; font-weight: 600; }
   input[type=checkbox].tog { width: 36px; height: 20px; appearance: none; background: #d1d5db; border-radius: 999px;
     position: relative; cursor: pointer; transition: background .15s; }
@@ -53,11 +53,12 @@
 </head>
 <body>
   <div class="top">
-    <h1>Demo Overlay</h1>
     <div class="top-actions">
       <label class="switch"><span id="onlabel">Off</span><input type="checkbox" class="tog" id="enabled"></label>
-      <button class="icon" id="settingsBtn" title="Settings: element picker, toolbar, API data, rules" style="display:none">&#9881;</button>
-      <button id="logoutBtn" title="Log out" style="display:none">Log out</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="icon" id="settingsBtn" title="Settings: element picker, toolbar, API data, rules" style="display:none">&#9881;</button>
+        <button id="logoutBtn" title="Log out" style="display:none">Log out</button>
+      </div>
     </div>
   </div>
 
@@ -127,7 +128,7 @@
 
     <section>
       <label class="row" style="font-size:12px"><input type="checkbox" id="toolbarOn"> Show presenter toolbar on pages <span class="note" style="margin:0">(Alt+Shift+T)</span></label>
-      <div class="note">Shortcuts: Alt+Shift+D demo/real data, Alt+Shift+P next profile, Alt+Shift+V variables table. Change them at chrome://extensions/shortcuts.</div>
+      <div class="note">Shortcuts: Alt+Shift+D demo/real data, Alt+Shift+P next profile, Alt+Shift+V variables table, Alt+Shift+R rules table. Change them at chrome://extensions/shortcuts.</div>
     </section>
 
     <section>
@@ -148,7 +149,29 @@
     </section>
 
     <section>
-      <h2>Rules <span id="host" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h2 style="margin:0">Rules <span id="host" style="text-transform:none;letter-spacing:0"></span></h2>
+        <div style="display:flex;gap:6px">
+          <button id="toggleAddRuleBtn" style="font-size:11px;padding:3px 8px">+ Add rule</button>
+          <button id="openRulesPageBtn" style="font-size:11px;padding:3px 8px" title="Open rules table in an on-page modal (Alt+Shift+R)">Open table on page</button>
+        </div>
+      </div>
+      <div id="addRuleBox" style="display:none; border:1px solid #e5e7eb; border-radius:8px; padding:10px; margin-bottom:10px; background:#f9fafb">
+        <div style="display:flex; gap:6px; margin-bottom:6px">
+          <select id="pNewType" style="width:85px">
+            <option value="text">text</option>
+            <option value="hide">hide</option>
+            <option value="image">image</option>
+            <option value="html">html</option>
+            <option value="api">api</option>
+          </select>
+          <input type="text" id="pNewSel" placeholder="CSS selector (e.g. h1, .total)" style="flex:1">
+        </div>
+        <div style="display:flex; gap:6px">
+          <input type="text" id="pNewVal" placeholder="Replacement value (e.g. {{company}})" style="flex:1">
+          <button id="pNewAddBtn" class="primary" style="white-space:nowrap">Add</button>
+        </div>
+      </div>
       <div id="rules"></div>
     </section>
   </div>
