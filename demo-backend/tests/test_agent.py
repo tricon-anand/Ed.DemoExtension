@@ -474,6 +474,8 @@ def test_prompt_teaches_list_strategies():
     assert "different length" in agent_mod.SYSTEM
     assert "DIFFER from the ones already on the page" in agent_mod.SYSTEM          # no near-duplicate names
     assert "*/api/students*" in agent_mod.SYSTEM and "_locale" in agent_mod.SYSTEM
+    assert "at most 8 items" in agent_mod.SYSTEM        # small lists: tokens are scarce on free plans
+    assert "exactly ONCE" in agent_mod.SYSTEM           # one propose_profile per persona: no duplicated echoes
 
 
 def test_api_rule_paths_and_nested_json_are_validated():
@@ -624,6 +626,35 @@ def test_groq_sends_fewer_captured_endpoints(monkeypatch):
     b = agent_mod.Builder([], (), None, caps)
     out = b.propose_rule("*/api/e12*", "api", '[{"path":"k","value":"1"}]')
     assert out.startswith("OK") and "NOTE" not in out
+
+
+def test_capture_block_fits_small_token_budgets(monkeypatch):
+    monkeypatch.setenv("AGENT_PROVIDER", "groq")
+    monkeypatch.delenv("AGENT_MAX_ENDPOINTS", raising=False)
+    fat = {"description": "x" * 80, "filterByResourceNodeId": 1, "label": "y" * 80,
+           "items": [{"k": "z" * 80}]}
+    caps = [capture(f"http://x.test/api/e{i}", fat) for i in range(20)]
+    sent = []
+
+    class Spy:
+        messages = None
+        def create(self, **kw):
+            sent.append(kw["messages"][0]["content"])
+            return NS(content=[], stop_reason="end_turn")
+    spy = Spy(); spy.messages = spy
+    agent_mod.run_builder(spy, "cover every endpoint", [], api_caps=caps)
+    prompt = sent[0]
+    assert "'[*]' alone" in prompt                       # the path rule is taught in API-ONLY mode
+    assert "e0" in prompt and "e19" not in prompt        # trimmed to fit Groq's request-size cap
+    assert len(prompt) < 4500                            # ~1100 tokens: safely inside 8000 TPM
+
+
+def test_token_limit_errors_get_a_next_step():
+    e = RuntimeError("413: Request too large for model on tokens per minute (TPM): Limit 8000, Requested 8602")
+    d = agent_mod.ai_error_detail(e)
+    assert d.startswith("The AI request failed: 413") and "AGENT_MAX_ENDPOINTS=6" in d
+    plain = agent_mod.ai_error_detail(RuntimeError("connection reset"))
+    assert plain.startswith("The AI request failed: connection reset") and "AGENT_MAX_ENDPOINTS" not in plain
 
 
 def test_build_accepts_captured_api_json_and_plumbs_it(client, org_a, fake_agent):

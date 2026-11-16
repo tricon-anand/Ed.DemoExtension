@@ -19,6 +19,17 @@ MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "20"))
 RESERVED = {"_locale", "_currency"}
 
 
+def ai_error_detail(e) -> str:
+    """User-facing text for a failed model call. Token-limit errors (Groq free plan caps requests
+    at 8000 tokens/minute) get a concrete next step instead of a bare 413."""
+    s = str(e)
+    msg = "The AI request failed: " + s[:200]
+    if "413" in s or "TPM" in s or "tokens per minute" in s.lower():
+        msg += (" — the request was larger than the provider allows. Use a shorter brief, split the demo"
+                " into several smaller builds, or set AGENT_MAX_ENDPOINTS=6 in the backend environment.")
+    return msg
+
+
 class AgentUnavailable(Exception):
     pass
 
@@ -210,6 +221,11 @@ LISTS AND TABLES: when the brief asks to change a list of items (students, deals
   students_json = [{"id":"S-2001","name":"Oliver Hughes","grade":"A","attendance":0.96}, ...]
   Invent believable items that follow the structure of the real response. Inside a list variable numbers
   stay raw (no separators, no symbols, no filters) and there are no {{placeholders}}.
+- Keep every list variable to at most 8 items: invent fewer than the real response has if you need to -
+  no demo audience counts past 8, and every extra item costs tokens the provider may refuse.
+- Propose each persona exactly ONCE: ONE propose_profile call holding every variable for it. Never
+  re-propose a profile to add more variables - the first call already holds them and repeating big
+  lists twice can blow the provider's token limit and kill the run.
 - PARTIAL EDITS: when only some fields change and the item count stays the same, use indexed or wildcard
   paths (students[0].grade, students[*].status). Keep summary fields such as counts and totals consistent
   with the new list.
@@ -725,7 +741,7 @@ def _shape(v, depth=0):
             head.append(f"…+{len(v) - 1} more items")
         return head
     if isinstance(v, str):
-        return v[:60] + ("…" if len(v) > 60 else "")
+        return v[:32] + ("…" if len(v) > 32 else "")     # the paths and types matter, not the contents
     return v
 
 
@@ -744,7 +760,7 @@ def _api_section(caps):
         seen.add(shown)
         count = f", {len(c['data'])} items" if isinstance(c["data"], list) else ""
         lines.append(f"- selector: *{u.path}*  ({c['method']} {shown}{count})"
-                     + f"\n  sample: {_cap(json.dumps(_shape(c['data']), sort_keys=True, separators=(',', ':'), ensure_ascii=False), 600)}")
+                     + f"\n  sample: {_cap(json.dumps(_shape(c['data']), sort_keys=True, separators=(',', ':'), ensure_ascii=False), 450)}")
     return "\n".join(lines)
 
 
@@ -759,10 +775,17 @@ def run_builder(client, brief, snapshot=None, existing_selectors=(), research=Fa
         # small free-plan token limits: send fewer captured endpoints (override with AGENT_MAX_ENDPOINTS)
         cap = int(os.getenv("AGENT_MAX_ENDPOINTS") or (16 if provider() == "groq" else 20))
         section = _api_section(b.api_caps[:cap])
+        # free plans also cap REQUEST size (Groq: 8000 tokens/minute, a 413 above it): keep the
+        # capture block well inside it even when the endpoints have fat samples
+        while len(section) > 3000 and cap > 2:
+            cap -= 1
+            section = _api_section(b.api_caps[:cap])
         if section:
             prompt += ("\nCAPTURED API RESPONSES - PRIMARY SOURCE for data, lists, tables and metrics loaded via API.\n"
                        "MODE: API-ONLY. Propose ONLY rules of type 'api' that rewrite these endpoints. "
                        "Do NOT propose DOM rules (text, hide, image, html). Do NOT use CSS selectors.\n"
+                       "A path starts with a key of the response - never '[*]' alone and never an empty path; "
+                       "a whole array is replaced by pointing the edit at its key (pageLearners).\n"
                        "Copy the selector pattern as written and use paths the sample shows (replace a whole list or extend "
                        "it with invented items; the item count may differ).\n"
                        + section + "\n")

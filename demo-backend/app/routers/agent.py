@@ -100,7 +100,7 @@ def _run(db, user, sc, kind, brief, fn):
         persist()
         run.status, run.proposal = "failed", {"error": str(e)[:300]}
         db.commit()
-        raise HTTPException(status_code=502, detail="The AI request failed: " + str(e)[:200])
+        raise HTTPException(status_code=502, detail=agent_mod.ai_error_detail(e))
     persist()
     run.status, run.proposal, run.trace = "proposed", proposal, trace
     audit(db, user, "agent." + kind, brief[:200], sc.id)
@@ -195,7 +195,7 @@ def build_stream(scenario_id: int, body: BuildIn, db: Session = Depends(get_db),
                     persist()
                     wrun.status, wrun.proposal = "failed", {"error": str(e)[:300]}
                     wdb.commit()
-                    q.put({"kind": "error", "run_id": run_id, "detail": "The AI request failed: " + str(e)[:200]})
+                    q.put({"kind": "error", "run_id": run_id, "detail": agent_mod.ai_error_detail(e)})
                     return
                 persist()
                 wrun.status, wrun.proposal, wrun.trace = "proposed", proposal, trace
