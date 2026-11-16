@@ -289,6 +289,27 @@
         .vadd input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px;
                       font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
         .vadd input.k { flex: 0 0 150px; }
+        .vpanerow td { background: #f9fafb; padding: 8px 10px; }
+        .vpane { font-size: 12px; }
+        .vpane .crumb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+        .vpane .crumb button { padding: 2px 8px; font-size: 11px; border-radius: 999px; border: 1px solid #d1d5db;
+                               background: #fff; cursor: pointer; }
+        .vpane .crumb button.last { background: #2563eb; color: #fff; border-color: #2563eb; }
+        .vpane .sep { color: #9ca3af; }
+        .vmodes { margin-left: auto; display: flex; gap: 4px; }
+        .vmodes button { padding: 2px 10px; font-size: 11px; border-radius: 6px; border: 1px solid #d1d5db;
+                         background: #fff; cursor: pointer; }
+        .vmodes button.on { background: #111827; color: #fff; border-color: #111827; }
+        .vbody { max-height: 280px; overflow: auto; }
+        .vsub { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; }
+        .vsub th { text-align: left; font-size: 11px; color: #6b7280; padding: 4px 8px;
+                   border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
+        .vsub td { padding: 4px 8px; border-bottom: 1px solid #f3f4f6; font-family: ui-monospace, Consolas, monospace;
+                   font-size: 11px; vertical-align: top; }
+        .vsub tr:last-child td { border-bottom: 0; }
+        .vchip { border: 1px solid #93c5fd; background: #eff6ff; color: #1d4ed8; border-radius: 999px;
+                 padding: 1px 8px; font-size: 11px; cursor: pointer; font-family: ui-monospace, Consolas, monospace; }
+        .vmore { font-size: 11px; color: #6b7280; margin-top: 4px; }
       </style>
       <div class="badge" id="badge"></div>
       <div class="bar" id="bar"><b>DEMO</b>
@@ -439,7 +460,7 @@
       dlg.innerHTML = `
         <div class="vhead"><h3>Variables <select id="vprof"></select></h3>
           <button id="vclose" title="Close (Esc)">x</button></div>
-        <div class="vhint">Click a value to edit it. Enter or clicking away saves, Esc cancels. A value can be any text, including a whole JSON list.</div>
+        <div class="vhint">Click a value to edit it — JSON values open a table view with a raw JSON editor. Enter or clicking away saves, Esc cancels.</div>
         <div class="vmiss" id="vmiss" style="display:none"></div>
         <div class="vscroll"><table class="vtable">
           <thead><tr><th style="width:170px">Variable</th><th>Value</th><th style="width:26px"></th></tr></thead>
@@ -459,8 +480,9 @@
       }
       varsKeyHandler = (e) => {
         if (e.key !== 'Escape') return;
-        const ed = dlg.querySelector('textarea');
-        if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, second closes
+        const ed = dlg.querySelector('textarea.vedit');
+        if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, next closes the pane, then the modal
+        else if (paneState) closePane();
         else closeVars();
       };
       window.addEventListener('keydown', varsKeyHandler, true);
@@ -473,6 +495,7 @@
 
   function closeVars() {
     if (!varsDlg) return;
+    closePane();
     varsDlg.remove();
     varsDlg = null;
     if (varsKeyHandler) { window.removeEventListener('keydown', varsKeyHandler, true); varsKeyHandler = null; }
@@ -480,6 +503,7 @@
 
   function refreshVars() {
     if (!varsDlg) return;
+    closePane();                   // a rebuild invalidates the open pane's row
     const dlg = varsDlg;
     const sel = dlg.querySelector('#vprof');
     sel.replaceChildren(...Object.keys(state.profiles).map((n) => {
@@ -502,12 +526,19 @@
       const name = document.createElement('td');
       name.className = 'vname';
       name.textContent = k;
+      name.dataset.key = k;
       const val = document.createElement('td');
       const cell = document.createElement('div');
       cell.className = 'vval clamp';
-      cell.textContent = String(v);
+      const parsed = tryJson(v);
+      if (parsed) {
+        cell.textContent = jsonSummary(parsed);        // JSON values open the table pane instead of the text editor
+        cell.onclick = () => togglePane(k);
+      } else {
+        cell.textContent = String(v);
+        cell.onclick = () => editVar(cell, k);
+      }
       cell.title = String(v).slice(0, 400);
-      cell.onclick = () => editVar(cell, k);
       val.appendChild(cell);
       const del = document.createElement('td');
       const x = document.createElement('button');
@@ -534,6 +565,7 @@
     const td = cell.parentElement;
     const original = String((state.profiles[state.activeProfile] || {})[key] ?? '');
     const ta = document.createElement('textarea');
+    ta.className = 'vedit';
     ta.value = original;
     td.replaceChildren(ta);
     ta.focus();
@@ -565,6 +597,254 @@
     if (!k) { varsDlg.querySelector('#vnewk').focus(); return; }
     await writeVar(k, v);
     refreshVars();
+  }
+
+  // ---------- JSON values: a table pane instead of a text editor ----------
+  // A whole-list variable (students_json = '[{"name":"Asha"}, ...]') is unreadable as text, so
+  // arrays of objects render like the page's own tables, nested values drill down, and Raw JSON
+  // mode keeps full control. The profile value stays ONE string: raw mode writes back
+  // JSON.stringify (compact, one line) so the popup's "name = value" format survives.
+  const PANE_ROW_CAP = 50;
+
+  function tryJson(text) {
+    const t = String(text == null ? '' : text).trim();
+    if (!t.startsWith('{') && !t.startsWith('[')) return null;
+    try { const v = JSON.parse(t); return v && typeof v === 'object' ? v : null; } catch (e) { return null; }
+  }
+
+  function jsonSummary(v) {
+    if (Array.isArray(v)) {
+      const kinds = new Set(v.map((x) => Array.isArray(x) ? 'array' : x === null ? 'null' : typeof x));
+      let s = v.length + ' item' + (v.length === 1 ? '' : 's');
+      if (kinds.size === 1 && kinds.has('object')) {
+        const keys = [...new Set(v.flatMap((x) => Object.keys(x || {})))];
+        s += ' · keys: ' + keys.slice(0, 6).join(', ') + (keys.length > 6 ? ', …' : '');
+      } else if (kinds.size === 1) {
+        s += ' · ' + [...kinds][0];
+      }
+      return s;
+    }
+    const keys = Object.keys(v);
+    return keys.length
+      ? 'object · ' + keys.length + ' keys: ' + keys.slice(0, 6).join(', ') + (keys.length > 6 ? ', …' : '')
+      : 'object · no keys';
+  }
+
+  function resolvePath(root, path) {
+    let cur = root;
+    for (const step of path) cur = cur[step];
+    return cur;
+  }
+
+  let paneState = null;   // { tr, td, key, root, path, mode } — one pane open at a time
+
+  function togglePane(key) {
+    if (paneState && paneState.key === key) closePane();
+    else openPane(key);
+  }
+
+  function closePane() {
+    if (!paneState) return;
+    paneState.tr.remove();
+    paneState = null;
+  }
+
+  function openPane(key) {
+    closePane();
+    const root = tryJson((state.profiles[state.activeProfile] || {})[key]);
+    if (!root) return;                       // the value changed while the modal was open
+    const nameTd = [...varsDlg.querySelectorAll('.vname')].find((td) => td.dataset.key === key);
+    if (!nameTd) return;
+    const paneTr = document.createElement('tr');
+    paneTr.className = 'vpanerow';
+    const paneTd = document.createElement('td');
+    paneTd.colSpan = 3;
+    paneTr.appendChild(paneTd);
+    nameTd.parentElement.after(paneTr);
+    paneState = { tr: paneTr, td: paneTd, key, root, path: [], mode: 'table' };
+    renderPane();
+  }
+
+  function renderPane() {
+    if (!paneState) return;
+    const { td, key, root, path, mode } = paneState;
+    td.replaceChildren();
+    const pane = document.createElement('div');
+    pane.className = 'vpane';
+    td.appendChild(pane);
+
+    const crumb = document.createElement('div');
+    crumb.className = 'crumb';
+    let prefix = [];
+    crumb.appendChild(crumbBtn(key, [], prefix.length === path.length));
+    for (const step of path) {
+      prefix = prefix.concat(step);
+      const label = typeof step === 'number' ? '[' + step + ']' : step;
+      crumb.appendChild(sep());
+      crumb.appendChild(crumbBtn(label, prefix.slice(), prefix.length === path.length));
+    }
+    const modes = document.createElement('div');
+    modes.className = 'vmodes';
+    for (const [label, m] of [['Table', 'table'], ['Raw JSON', 'raw']]) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (mode === m) b.className = 'on';
+      b.onclick = () => { paneState.mode = m; renderPane(); };
+      modes.appendChild(b);
+    }
+    const x = document.createElement('button');
+    x.className = 'vdel';
+    x.title = 'Close (Esc)';
+    x.textContent = '✕';
+    x.onclick = closePane;
+    crumb.appendChild(modes);
+    crumb.appendChild(x);
+    pane.appendChild(crumb);
+
+    const body = document.createElement('div');
+    body.className = 'vbody';
+    pane.appendChild(body);
+    const cur = resolvePath(root, path);
+    if (mode === 'table') renderJsonTable(body, cur, path);
+    else renderRawEditor(body, key);
+  }
+
+  function crumbBtn(label, pathPrefix, last) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (last) b.className = 'last';
+    b.onclick = () => { paneState.path = pathPrefix; paneState.mode = 'table'; renderPane(); };
+    return b;
+  }
+
+  function sep() {
+    const s = document.createElement('span');
+    s.className = 'sep';
+    s.textContent = '›';
+    return s;
+  }
+
+  function note(body, text) {
+    const n = document.createElement('div');
+    n.className = 'vmore';
+    n.textContent = text;
+    body.appendChild(n);
+  }
+
+  function renderJsonTable(body, cur, path) {
+    if (Array.isArray(cur) && cur.length && cur.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
+      const keys = [...new Set(cur.flatMap((x) => Object.keys(x || {})))];
+      const shownKeys = keys.slice(0, 12);
+      const table = document.createElement('table');
+      table.className = 'vsub';
+      const head = document.createElement('tr');
+      for (const h of ['#'].concat(shownKeys)) {
+        const th = document.createElement('th');
+        th.textContent = h;
+        head.appendChild(th);
+      }
+      table.appendChild(head);
+      cur.slice(0, PANE_ROW_CAP).forEach((item, i) => {
+        const tr = document.createElement('tr');
+        const td0 = document.createElement('td');
+        td0.style.cssText = 'color:#9ca3af;';
+        td0.textContent = i;
+        tr.appendChild(td0);
+        for (const k of shownKeys) {
+          const td = document.createElement('td');
+          renderValue(td, (item || {})[k], path.concat(i, k));
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+      });
+      body.appendChild(table);
+      if (cur.length > PANE_ROW_CAP) note(body, 'showing first ' + PANE_ROW_CAP + ' of ' + cur.length + ' items');
+      if (keys.length > 12) note(body, '+' + (keys.length - 12) + ' more keys not shown');
+    } else if (Array.isArray(cur)) {
+      if (!cur.length) { note(body, '(empty list)'); return; }
+      const table = document.createElement('table');
+      table.className = 'vsub';
+      cur.slice(0, PANE_ROW_CAP).forEach((item, i) => {
+        const tr = document.createElement('tr');
+        const td0 = document.createElement('td');
+        td0.style.cssText = 'color:#9ca3af;';
+        td0.textContent = i;
+        const td = document.createElement('td');
+        renderValue(td, item, path.concat(i));
+        tr.append(td0, td);
+        table.appendChild(tr);
+      });
+      body.appendChild(table);
+      if (cur.length > PANE_ROW_CAP) note(body, 'showing first ' + PANE_ROW_CAP + ' of ' + cur.length + ' items');
+    } else if (cur && typeof cur === 'object') {
+      const table = document.createElement('table');
+      table.className = 'vsub';
+      for (const [k, v] of Object.entries(cur)) {
+        const tr = document.createElement('tr');
+        const td0 = document.createElement('td');
+        td0.style.cssText = 'color:#6b7280;font-weight:600;';
+        td0.textContent = k;
+        const td = document.createElement('td');
+        renderValue(td, v, path.concat(k));
+        tr.append(td0, td);
+        table.appendChild(tr);
+      }
+      body.appendChild(table);
+    } else {
+      note(body, 'This is a ' + (cur === null ? 'null' : typeof cur) + ' — edit it in Raw JSON mode.');
+    }
+  }
+
+  function renderValue(td, v, childPath) {
+    if (v && typeof v === 'object') {
+      const chip = document.createElement('button');
+      chip.className = 'vchip';
+      chip.textContent = Array.isArray(v)
+        ? '[' + v.length + (v.length === 1 ? ' item]' : ' items]')
+        : '{' + Object.keys(v).slice(0, 3).join(', ') + (Object.keys(v).length > 3 ? ', …}' : '}');
+      chip.title = 'Open';
+      chip.onclick = () => { paneState.path = childPath; paneState.mode = 'table'; renderPane(); };
+      td.appendChild(chip);
+    } else {
+      td.textContent = v === '' ? '""' : String(v);
+    }
+  }
+
+  function renderRawEditor(body, key) {
+    const original = String((state.profiles[state.activeProfile] || {})[key] ?? '');
+    const ta = document.createElement('textarea');
+    ta.style.minHeight = '180px';
+    try { ta.value = JSON.stringify(JSON.parse(original), null, 2); }   // pretty for editing
+    catch (e) { ta.value = original; }
+    body.appendChild(ta);
+    const err = document.createElement('div');
+    err.className = 'vmore';
+    body.appendChild(err);
+    const row = document.createElement('div');
+    row.className = 'row';
+    const save = document.createElement('button');
+    save.className = 'primary';
+    save.textContent = 'Save';
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    row.append(cancel, save);
+    body.appendChild(row);
+    save.onclick = async () => {
+      let parsed;
+      try { parsed = JSON.parse(ta.value); }
+      catch (ex) { err.textContent = 'Not valid JSON: ' + ex.message; return; }
+      err.textContent = '';
+      await writeVar(key, JSON.stringify(parsed));     // compact, ONE line: popup-safe and engine-safe
+      if (!varsDlg) return;                            // the page may have reloaded to refresh API data
+      if (parsed && typeof parsed === 'object') {
+        paneState.root = parsed;
+        paneState.path = [];
+        paneState.mode = 'table';
+        renderPane();
+      } else closePane();
+      refreshVars();
+    };
+    cancel.onclick = () => { closePane(); refreshVars(); };
   }
 
   // ---------- page scan (for the AI assistant) and broken-rule check ----------
