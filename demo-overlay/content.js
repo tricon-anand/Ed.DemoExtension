@@ -289,6 +289,10 @@
         .vadd input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px;
                       font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
         .vadd input.k { flex: 0 0 150px; }
+        .vsavebox { border-top: 1px solid #e5e7eb; margin-top: 10px; padding: 10px 2px 0; }
+        .vsaveq { font-size: 12px; font-weight: 600; margin: 0 0 8px; }
+        .vsavebox input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d1d5db;
+                          border-radius: 6px; font-size: 12px; }
         .vpanerow td { background: #f9fafb; padding: 8px 10px; }
         .vpane { font-size: 12px; }
         .vpane .crumb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
@@ -416,6 +420,7 @@
   // toolbar, and edits them through the same save path the toolbar uses.
   let varsDlg = null;
   let varsKeyHandler = null;
+  let varsDraft = null;   // edits happen on a draft copy of the profile: { name, original, dirty }
 
   function missingVars() {
     // {{names}} used by rules that apply here but are not defined in the active profile. fill()
@@ -455,25 +460,54 @@
         state.activeProfile = Object.keys(state.profiles)[0];
       }
       const root = ensureUI();
+      // Edits land on a draft copy so the page can preview them live; nothing is persisted until
+      // Save, which asks whether to update the existing profile or to save it as a new one.
+      const vars = state.profiles[state.activeProfile] || (state.profiles[state.activeProfile] = {});
+      varsDraft = { name: state.activeProfile, original: Object.assign({}, vars), dirty: false };
+      state.profiles[state.activeProfile] = Object.assign({}, vars);
+      apply();                         // preview the (unchanged) draft
       const dlg = document.createElement('div');
       dlg.className = 'vdlg';
       dlg.innerHTML = `
-        <div class="vhead"><h3>Variables <select id="vprof"></select></h3>
-          <button id="vclose" title="Close (Esc)">x</button></div>
-        <div class="vhint">Click a value to edit it — JSON values open a table view with a raw JSON editor. Enter or clicking away saves, Esc cancels.</div>
+        <div class="vhead"><h3>Variables — <span id="vprofname"></span></h3>
+          <div style="display:flex;gap:6px">
+            <button id="vsave" class="primary">Save</button>
+            <button id="vclose" title="Close (Esc)">x</button>
+          </div></div>
+        <div class="vhint">Click a value to edit it — JSON values open a table view with a raw JSON editor. Enter or clicking away saves to the draft (the page previews it live); nothing is final until you press Save.</div>
         <div class="vmiss" id="vmiss" style="display:none"></div>
         <div class="vscroll"><table class="vtable">
           <thead><tr><th style="width:170px">Variable</th><th>Value</th><th style="width:26px"></th></tr></thead>
           <tbody id="vrows"></tbody></table></div>
         <div class="vadd"><input class="k" id="vnewk" placeholder="new_name"><input id="vnewv" placeholder="value">
-          <button id="vadd" class="primary">Add</button></div>`;
+          <button id="vadd" class="primary">Add</button></div>
+        <div class="vsavebox" id="vsavebox" style="display:none">
+          <div class="vsaveq">Save these changes?</div>
+          <div class="row">
+            <button id="vupd" class="primary">Update profile</button>
+            <button id="vnew">Save as new profile…</button>
+            <button id="vdiscard">Discard</button>
+          </div>
+          <div class="row" id="vnewrow" style="display:none">
+            <input id="vnewname" placeholder="New profile name">
+            <button id="vnewok" class="primary">Create</button>
+            <button id="vnewback">Back</button>
+          </div>
+        </div>`;
       root.appendChild(dlg);
       varsDlg = dlg;
-      dlg.querySelector('#vclose').onclick = closeVars;
-      dlg.querySelector('#vprof').onchange = async (e) => {
-        await setProfile(e.target.value);      // saves, re-applies, reloads the page when API data changed
-        refreshVars();
+      dlg.querySelector('#vprofname').textContent = varsDraft.name;
+      dlg.querySelector('#vclose').onclick = () => closeVars(true);
+      dlg.querySelector('#vsave').onclick = () => { if (varsDraft && varsDraft.dirty) showSaveChoice(); else closeVars(false); };
+      dlg.querySelector('#vupd').onclick = saveVarsUpdate;
+      dlg.querySelector('#vnew').onclick = () => {
+        dlg.querySelector('#vnewrow').style.display = '';
+        dlg.querySelector('#vnewname').focus();
       };
+      dlg.querySelector('#vnewback').onclick = () => { dlg.querySelector('#vnewrow').style.display = 'none'; };
+      dlg.querySelector('#vnewok').onclick = saveVarsAsNew;
+      dlg.querySelector('#vnewname').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveVarsAsNew(); });
+      dlg.querySelector('#vdiscard').onclick = discardVars;
       dlg.querySelector('#vadd').onclick = addVar;
       for (const id of ['vnewk', 'vnewv']) {
         dlg.querySelector('#' + id).addEventListener('keydown', (e) => { if (e.key === 'Enter') addVar(); });
@@ -483,7 +517,7 @@
         const ed = dlg.querySelector('textarea.vedit');
         if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, next closes the pane, then the modal
         else if (paneState) closePane();
-        else closeVars();
+        else closeVars(true);
       };
       window.addEventListener('keydown', varsKeyHandler, true);
       refreshVars();
@@ -493,23 +527,68 @@
     }
   }
 
-  function closeVars() {
+  function closeVars(interactive) {
     if (!varsDlg) return;
+    // X and Esc with uncommitted edits do not close the modal: they open the save-choice box instead
+    if (interactive && varsDraft && varsDraft.dirty) { showSaveChoice(); return; }
+    if (varsDraft) {                   // closing with uncommitted edits: put the original profile back
+      state.profiles[varsDraft.name] = varsDraft.original;
+      apply();
+    }
+    varsDraft = null;
     closePane();
     varsDlg.remove();
     varsDlg = null;
     if (varsKeyHandler) { window.removeEventListener('keydown', varsKeyHandler, true); varsKeyHandler = null; }
   }
 
+  // The save box: update the existing profile, fork the draft into a new one, or throw it away.
+  function showSaveChoice() {
+    if (!varsDlg) return;
+    if (!varsDraft) { closeVars(false); return; }
+    varsDlg.querySelector('#vupd').textContent = 'Update "' + varsDraft.name + '"';
+    varsDlg.querySelector('#vnewrow').style.display = 'none';
+    varsDlg.querySelector('#vsavebox').style.display = '';
+  }
+
+  async function saveVarsUpdate() {
+    if (!varsDlg || !varsDraft) return;
+    await save();                      // the draft object already sits in state.profiles
+    const name = varsDraft.name;
+    varsDraft = null;
+    afterChange();                     // API data is filled once per page load: reload when it changed
+    closeVars(false);
+    toast('Profile "' + name + '" updated');
+  }
+
+  async function saveVarsAsNew() {
+    if (!varsDlg || !varsDraft) return;
+    const name = varsDlg.querySelector('#vnewname').value.trim();
+    if (!name) { varsDlg.querySelector('#vnewname').focus(); return; }
+    if (hasOwn(state.profiles, name)) { toast('A profile named "' + name + '" already exists'); return; }
+    state.profiles[name] = Object.assign({}, state.profiles[varsDraft.name]);   // the draft becomes the new profile
+    state.profiles[varsDraft.name] = varsDraft.original;                        // the old profile keeps its values
+    state.activeProfile = name;
+    await save();
+    varsDraft = null;
+    afterChange();
+    closeVars(false);
+    toast('Saved as new profile "' + name + '"');
+  }
+
+  function discardVars() {
+    if (varsDraft) {
+      state.profiles[varsDraft.name] = varsDraft.original;
+      apply();                         // revert the preview
+      varsDraft = null;
+    }
+    closeVars(false);
+  }
+
   function refreshVars() {
     if (!varsDlg) return;
     closePane();                   // a rebuild invalidates the open pane's row
     const dlg = varsDlg;
-    const sel = dlg.querySelector('#vprof');
-    sel.replaceChildren(...Object.keys(state.profiles).map((n) => {
-      const o = document.createElement('option'); o.value = o.textContent = n; return o;
-    }));
-    sel.value = state.activeProfile;
     const missing = missingVars();
     const miss = dlg.querySelector('#vmiss');
     if (missing.length) {
@@ -581,13 +660,11 @@
   }
 
   async function writeVar(name, value) {
-    if (!name) return;
-    await load();                      // merge with whatever the popup changed in the meantime
-    const p = state.profiles[state.activeProfile] || (state.profiles[state.activeProfile] = {});
+    if (!name || !varsDraft) return;
+    const p = state.profiles[varsDraft.name] || (state.profiles[varsDraft.name] = {});
     if (value === null) delete p[name]; else p[name] = value;
-    await save();
-    apply();
-    afterChange();                     // API data is filled once per page load: reload when it changed
+    varsDraft.dirty = true;
+    apply();                           // preview the draft on the page; persisted only on Save
   }
 
   async function addVar() {

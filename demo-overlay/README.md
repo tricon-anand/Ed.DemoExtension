@@ -21,12 +21,26 @@ python -m http.server 8000
 3. Switch the **Profile** dropdown between US, UK and India. The page data changes instantly.
 4. Toggle the switch **Off** to restore the original page.
 
+## The popup
+
+Click the extension icon to open the side panel. It has three views:
+
+- **Log in** — the only thing shown until you have a session (API URL, email, password). **Log out** sits at the top bar.
+- **Main** — what you use to present:
+  - **Scenario** — pick one and press **Load / Sync**.
+  - **Profile** — switch profiles, with **New**, **Edit** and **Delete**. **Edit** opens the variables table as a modal over the page: edits preview live on the page, and **Save** asks whether to update the existing profile or save it as a new one. Esc or the X with unsaved edits opens the same choice; **Discard** reverts.
+  - **AI assistant** — describe the demo, **Build with AI**, review what streams in, **Apply**.
+  - **Import / Export scenario** — paste or copy scenario JSON.
+- **Settings** (the **⚙** in the top bar) — the manual tools: **Pick an element on this page**, the presenter-toolbar switch, **API data (charts and tables)** (captured calls) and the **Rules** list.
+
+The **Demo data / Off** switch stays in the top bar of every view.
+
 ## Use it on a real app
 
-1. Open the app, click the extension icon, click **Pick an element on this page**.
+1. Open the app, click the extension icon, open the settings view (**⚙**), click **Pick an element on this page**.
 2. Click any text, number or image on the page. Choose an action (replace text / hide / replace image / replace HTML) and type the new value.
-3. Use variables like `{{company}}` or `{{currency}}` in values. Define them per profile (country, persona) in the popup.
-4. Export the scenario to share it with teammates.
+3. Use variables like `{{company}}` or `{{currency}}` in values. Define them per profile (country, persona) with the profile's **Edit** button — the variables table opens over the page.
+4. Export the scenario to share it with teammates (Import / Export in the main view).
 
 ## How it works
 
@@ -59,7 +73,7 @@ Many apps draw charts and tables from JSON calls (fetch or XHR), not from page t
 
 Numbers inside the list JSON stay raw (no separators, no filters). A key the response does not have can also be created, but only to hold a whole object or list.
 
-**Create one without typing JSON:** reload the app page, open the popup, expand "API data (charts and tables)", click "Show captured calls", pick a call, type new values and save.
+**Create one without typing JSON:** reload the app page, open the popup, open the settings view (**⚙**), expand "API data (charts and tables)", click "Show captured calls", pick a call, type new values and save.
 
 After switching profile, reload the page to refresh API data. The badge says so.
 
@@ -75,7 +89,7 @@ After switching profile, reload the page to refresh API data. The badge says so.
 
 ## Phase 3 Step 3: presenter toolbar and shortcuts
 
-* Tick "Show presenter toolbar on pages" in the popup. A small bar appears bottom right: **Demo data / Real data** switch, profile picker, Reload, hide.
+* Tick "Show presenter toolbar on pages" in the popup's settings view (**⚙**). A small bar appears bottom right: **Demo data / Real data** switch, profile picker, Variables, Reload, hide.
 * Shortcuts (change at `chrome://extensions/shortcuts`): `Alt+Shift+D` demo/real, `Alt+Shift+P` next profile, `Alt+Shift+T` toolbar.
 * When a switch changes API data, the page reloads itself so charts follow.
 

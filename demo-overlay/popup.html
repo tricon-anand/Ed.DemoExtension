@@ -7,6 +7,7 @@
   body { min-width: 300px; margin: 0; padding: 14px; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; }
   h1 { font-size: 15px; margin: 0; }
   .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .top-actions { display: flex; align-items: center; gap: 8px; }
   .switch { display: flex; align-items: center; gap: 8px; font-weight: 600; }
   input[type=checkbox].tog { width: 36px; height: 20px; appearance: none; background: #d1d5db; border-radius: 999px;
     position: relative; cursor: pointer; transition: background .15s; }
@@ -23,6 +24,7 @@
   button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
   button.primary:hover { background: #1d4ed8; }
   button.wide { width: 100%; padding: 9px; font-size: 13px; }
+  button.icon { padding: 4px 9px; font-size: 14px; line-height: 1; }
   .row { display: flex; gap: 6px; align-items: center; }
   .row > select { flex: 1; }
   .rule { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-bottom: 6px; }
@@ -35,6 +37,7 @@
   details summary { cursor: pointer; font-weight: 600; font-size: 12px; margin-bottom: 6px; }
   .note { font-size: 11px; color: #6b7280; margin-top: 4px; }
   #status { font-size: 11px; color: #059669; height: 14px; margin-top: 4px; }
+  #serverStatus { min-height: 14px; }
   /* API data (network) helper */
   .call { display: flex; gap: 6px; align-items: center; padding: 5px 6px; border-radius: 6px; cursor: pointer; font: 11px ui-monospace, Consolas, monospace; }
   .call:hover { background: #f3f4f6; }
@@ -51,94 +54,106 @@
 <body>
   <div class="top">
     <h1>Demo Overlay</h1>
-    <label class="switch"><span id="onlabel">Off</span><input type="checkbox" class="tog" id="enabled"></label>
+    <div class="top-actions">
+      <label class="switch"><span id="onlabel">Off</span><input type="checkbox" class="tog" id="enabled"></label>
+      <button class="icon" id="settingsBtn" title="Settings: element picker, toolbar, API data, rules" style="display:none">&#9881;</button>
+      <button id="logoutBtn" title="Log out" style="display:none">Log out</button>
+    </div>
   </div>
 
-  <section id="server">
-    <h2>Server</h2>
-    <div id="loggedOut">
+  <!-- 1. Login: the only view shown until you are logged in -->
+  <div id="loginView">
+    <section>
+      <h2>Log in</h2>
       <input type="text" id="apiBase" placeholder="API URL">
       <input type="text" id="email" placeholder="Email" style="margin-top:6px">
       <input type="password" id="password" placeholder="Password" style="margin-top:6px">
       <button class="primary wide" id="loginBtn" style="margin-top:6px">Log in</button>
-    </div>
-    <div id="loggedIn" style="display:none">
-      <div class="note" id="who"></div>
-      <div class="row" style="margin-top:6px">
+    </section>
+  </div>
+
+  <!-- 2. Main: scenario, profile, AI assistant, import/export -->
+  <div id="mainView" style="display:none">
+    <section>
+      <h2>Scenario</h2>
+      <div class="row">
         <select id="scenarioSel"></select>
         <button id="syncBtn">Load / Sync</button>
       </div>
-      <div class="row" style="margin-top:6px"><button id="logoutBtn">Log out</button></div>
-    </div>
-    <div id="serverStatus" class="note"></div>
-  </section>
+      <div class="note" id="who"></div>
+    </section>
 
-  <section>
-    <button class="primary wide" id="pick">Pick an element on this page</button>
-  </section>
-
-  <section>
-    <label class="row" style="font-size:12px"><input type="checkbox" id="toolbarOn"> Show presenter toolbar on pages <span class="note" style="margin:0">(Alt+Shift+T)</span></label>
-    <div class="note">Shortcuts: Alt+Shift+D demo/real data, Alt+Shift+P next profile. Change them at chrome://extensions/shortcuts.</div>
-  </section>
-
-  <section>
-    <h2>Profile (country / persona)</h2>
-    <div class="row">
-      <select id="profile"></select>
-      <button id="newProfile">New</button>
-      <button id="delProfile">Delete</button>
-    </div>
-    <h2 style="margin-top:10px">Variables for this profile</h2>
-    <textarea id="vars" rows="5" placeholder="company = Acme Corp&#10;currency = $&#10;user = Sarah"></textarea>
-    <div class="row" style="margin-top:6px"><button id="saveVars">Save variables</button><button id="openVars" title="Edit the variables in a table on the page">Open table on page</button></div>
-    <div class="note">One per line: <code>name = value</code>. Use as <code>{{name}}</code> in rules.</div>
-  </section>
-
-  <section>
-    <details id="netBox">
-      <summary>API data (charts and tables)</summary>
-      <div class="note" style="margin:0 0 6px">Reload the page, use the app, then list the JSON calls it made. Pick a call, type new values, and save an API rule.</div>
-      <div class="row"><button id="netRefresh">Show captured calls</button></div>
-      <div id="netList" style="margin-top:6px"></div>
-      <div id="netDetail" style="display:none; margin-top:8px">
-        <h2>URL pattern</h2>
-        <input type="text" id="netPattern">
-        <input type="text" id="netFilter" placeholder="Filter fields..." style="margin-top:6px">
-        <div id="netLeaves"></div>
-        <div class="note">Type a new value only for the fields to change. Use <code>{{variables}}</code> or plain values. Edit a path to use <code>[*]</code> for every array item.</div>
-        <div class="row" style="margin-top:6px"><button class="primary" id="netSave">Save API rule</button><button id="netCancel">Cancel</button></div>
+    <section>
+      <h2>Profile (country / persona)</h2>
+      <div class="row">
+        <select id="profile"></select>
       </div>
-    </details>
-  </section>
+      <div class="row" style="margin-top:6px">
+        <button id="newProfile">New</button>
+        <button id="editProfile" title="Edit this profile's variables in a table on the page">Edit</button>
+        <button id="delProfile">Delete</button>
+      </div>
+    </section>
 
-  <section>
-    <details id="aiBox">
-      <summary>AI assistant</summary>
-      <div class="note" style="margin:0 0 6px">Needs a server login and a loaded scenario. The assistant reads this page, proposes rules and profiles, and changes nothing until you press Apply.</div>
+    <section>
+      <h2>AI assistant</h2>
+      <div class="note" style="margin:0 0 6px">Reads this page, proposes rules and profiles, and changes nothing until you press Apply.</div>
       <textarea id="aiBrief" rows="3" placeholder="e.g. Private bank dashboard for a prospect in Mumbai, 3 regional profiles"></textarea>
       <div class="row" style="margin-top:6px"><button class="primary" id="aiBuild">Build with AI</button></div>
       <div id="aiOut" class="note"></div>
       <div class="row" style="margin-top:6px"><button class="primary" id="aiApply" style="display:none">Apply</button></div>
-    </details>
-  </section>
+    </section>
 
-  <section>
-    <h2>Rules <span id="host" style="text-transform:none;letter-spacing:0"></span></h2>
-    <div id="rules"></div>
-  </section>
+    <section>
+      <details>
+        <summary>Import / Export scenario</summary>
+        <textarea id="io" rows="6" placeholder="Paste scenario JSON here to import"></textarea>
+        <div class="row" style="margin-top:6px">
+          <button id="export">Export (copy)</button>
+          <button id="import">Import</button>
+          <button id="clear">Clear all</button>
+        </div>
+      </details>
+    </section>
+  </div>
 
-  <section>
-    <details>
-      <summary>Import / Export scenario</summary>
-      <textarea id="io" rows="6" placeholder="Paste scenario JSON here to import"></textarea>
-      <div class="row" style="margin-top:6px">
-        <button id="export">Export (copy)</button>
-        <button id="import">Import</button>
-        <button id="clear">Clear all</button>
-      </div>
-    </details>
-  </section>
+  <!-- 3. Settings (the gear): the manual tools, moved out of the main view -->
+  <div id="settingsView" style="display:none">
+    <section><button class="wide" id="backBtn">&larr; Back</button></section>
+
+    <section>
+      <button class="primary wide" id="pick">Pick an element on this page</button>
+    </section>
+
+    <section>
+      <label class="row" style="font-size:12px"><input type="checkbox" id="toolbarOn"> Show presenter toolbar on pages <span class="note" style="margin:0">(Alt+Shift+T)</span></label>
+      <div class="note">Shortcuts: Alt+Shift+D demo/real data, Alt+Shift+P next profile, Alt+Shift+V variables table. Change them at chrome://extensions/shortcuts.</div>
+    </section>
+
+    <section>
+      <details id="netBox">
+        <summary>API data (charts and tables)</summary>
+        <div class="note" style="margin:0 0 6px">Reload the page, use the app, then list the JSON calls it made. Pick a call, type new values, and save an API rule.</div>
+        <div class="row"><button id="netRefresh">Show captured calls</button></div>
+        <div id="netList" style="margin-top:6px"></div>
+        <div id="netDetail" style="display:none; margin-top:8px">
+          <h2>URL pattern</h2>
+          <input type="text" id="netPattern">
+          <input type="text" id="netFilter" placeholder="Filter fields..." style="margin-top:6px">
+          <div id="netLeaves"></div>
+          <div class="note">Type a new value only for the fields to change. Use <code>{{variables}}</code> or plain values. Edit a path to use <code>[*]</code> for every array item.</div>
+          <div class="row" style="margin-top:6px"><button class="primary" id="netSave">Save API rule</button><button id="netCancel">Cancel</button></div>
+        </div>
+      </details>
+    </section>
+
+    <section>
+      <h2>Rules <span id="host" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div id="rules"></div>
+    </section>
+  </div>
+
+  <div id="serverStatus" class="note"></div>
   <div id="status"></div>
 
   <script src="popup.js"></script>

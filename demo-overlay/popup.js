@@ -2,6 +2,7 @@ const KEY = 'demo';
 let state = { enabled: false, activeProfile: '', profiles: {}, rules: [] };
 let tabHost = '';
 let activeTab = null;
+let settingsOpen = false;   // the gear swaps the main view for the settings view
 
 const $ = (id) => document.getElementById(id);
 const send = (msg) => chrome.runtime.sendMessage(msg);
@@ -38,23 +39,6 @@ function flash(msg) {
   setTimeout(() => ($('status').textContent = ''), 2500);
 }
 
-function varsToText(obj) {
-  return Object.entries(obj || {})
-    .map(([k, v]) => k + ' = ' + v)
-    .join('\n');
-}
-
-function textToVars(text) {
-  const out = {};
-  text.split('\n').forEach((line) => {
-    const i = line.indexOf('=');
-    if (i < 1) return;
-    const k = line.slice(0, i).trim();
-    if (k) out[k] = line.slice(i + 1).trim();
-  });
-  return out;
-}
-
 function render() {
   $('enabled').checked = state.enabled;
   $('onlabel').textContent = state.enabled ? 'On' : 'Off';
@@ -68,7 +52,6 @@ function render() {
     if (name === state.activeProfile) o.selected = true;
     sel.appendChild(o);
   });
-  $('vars').value = varsToText(state.profiles[state.activeProfile]);
 
   $('host').textContent = tabHost ? '· ' + tabHost : '';
   const list = $('rules');
@@ -135,8 +118,12 @@ function serverMsg(text, bad) {
 
 async function renderServer() {
   const st = await send({ type: 'status' });
-  $('loggedOut').style.display = st.loggedIn ? 'none' : 'block';
-  $('loggedIn').style.display = st.loggedIn ? 'block' : 'none';
+  // login first: the login view is the only thing shown until there is a session
+  $('loginView').style.display = st.loggedIn ? 'none' : '';
+  $('mainView').style.display = st.loggedIn && !settingsOpen ? '' : 'none';
+  $('settingsView').style.display = st.loggedIn && settingsOpen ? '' : 'none';
+  $('settingsBtn').style.display = st.loggedIn ? '' : 'none';
+  $('logoutBtn').style.display = st.loggedIn ? '' : 'none';
   if (!st.loggedIn) {
     $('apiBase').value = st.apiBase;
     return;
@@ -185,6 +172,7 @@ async function initServer() {
 
   $('logoutBtn').onclick = async () => {
     await send({ type: 'logout' });
+    settingsOpen = false;
     serverMsg('');
     renderServer();
   };
@@ -417,20 +405,18 @@ async function init() {
     render();
   };
 
-  $('saveVars').onclick = async () => {
-    state.profiles[state.activeProfile] = textToVars($('vars').value);
-    await save();
-    flash('Variables saved');
-  };
-
-  $('openVars').onclick = async () => {
+  // Edit opens the variables table as a modal over the whole page (content.js), where edits are
+  // made on a draft and Save asks whether to update the profile or to save it as a new one.
+  $('editProfile').onclick = async () => {
     try {
       await pageMessage({ type: 'openVars' });
-      flash('Variable table opened on the page');
     } catch (e) {
       flash(e.message);
     }
   };
+
+  $('settingsBtn').onclick = () => { settingsOpen = !settingsOpen; renderServer(); };
+  $('backBtn').onclick = () => { settingsOpen = false; renderServer(); };
 
   $('pick').onclick = async () => {
     await refreshTab();
@@ -510,9 +496,9 @@ function detailText(p) {
 // same token the background worker stores in storage.
 async function aiStream(body, onEvent) {
   const { auth } = await chrome.storage.local.get('auth');
-  if (!auth || !auth.token) throw new Error('Log in first (Server section at the top of the popup).');
+  if (!auth || !auth.token) throw new Error('Log in first.');
   const st = await send({ type: 'status' });
-  if (!st.scenarioId) throw new Error('Choose a scenario in the Server section and press Load / Sync first. Importing JSON does not count.');
+  if (!st.scenarioId) throw new Error('Choose a scenario and press Load / Sync first. Importing JSON does not count.');
   const base = (st.apiBase || 'http://localhost:8001').replace(/\/+$/, '');
   let res;
   try {
