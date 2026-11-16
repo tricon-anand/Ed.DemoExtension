@@ -24,6 +24,10 @@
     "toggle-toolbar": {
       "suggested_key": { "default": "Alt+Shift+T" },
       "description": "Show or hide the presenter toolbar"
+    },
+    "toggle-vars": {
+      "suggested_key": { "default": "Alt+Shift+V" },
+      "description": "Show or hide the variables table"
     }
   },
   "content_scripts": [

@@ -261,10 +261,39 @@
                background: #1f2937; color: #fff; cursor: pointer; }
         .bar button.primary { background: #2563eb; border-color: #2563eb; }
         .bar b { letter-spacing: .04em; }
+        .vdlg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 660px;
+                max-width: 94vw; max-height: 84vh; display: flex; flex-direction: column; background: #fff;
+                color: #111827; border-radius: 12px; padding: 14px 16px; box-shadow: 0 20px 50px rgba(0,0,0,.35);
+                font-size: 13px; }
+        .vhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .vhead h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+        .vhint { font-size: 11px; color: #6b7280; margin: 3px 0 8px; }
+        .vmiss { font-size: 11px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca;
+                 border-radius: 6px; padding: 5px 9px; margin: 0 0 8px; }
+        .vscroll { overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; }
+        .vtable { width: 100%; border-collapse: collapse; }
+        .vtable th { text-align: left; font-size: 11px; color: #6b7280; padding: 6px 10px;
+                     border-bottom: 1px solid #e5e7eb; background: #f9fafb; position: sticky; top: 0; }
+        .vtable td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+        .vtable tr:last-child td { border-bottom: 0; }
+        .vname { font-family: ui-monospace, Consolas, monospace; font-size: 12px; font-weight: 600; }
+        .vval { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap;
+                word-break: break-all; cursor: pointer; }
+        .vval.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+        .vdlg textarea { width: 100%; min-height: 64px; max-height: 220px; resize: vertical; padding: 5px 8px;
+                 border: 1px solid #93c5fd; border-radius: 6px; font-family: ui-monospace, Consolas, monospace;
+                 font-size: 12px; }
+        .vdel { border: 0; background: none; color: #9ca3af; cursor: pointer; font-size: 13px; padding: 2px 6px; }
+        .vdel:hover { color: #dc2626; }
+        .vadd { display: flex; gap: 6px; padding: 8px 2px 0; }
+        .vadd input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+                      font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+        .vadd input.k { flex: 0 0 150px; }
       </style>
       <div class="badge" id="badge"></div>
       <div class="bar" id="bar"><b>DEMO</b>
         <button id="tgl"></button><select id="prof"></select>
+        <button id="vars" title="Variables table (Alt+Shift+V)">Variables</button>
         <button id="rld" title="Reload the page (clears anything typed)">Reload</button>
         <button id="hid" title="Hide toolbar (Alt+Shift+T)">x</button></div>`;
     bindToolbar(uiRoot);
@@ -335,6 +364,7 @@
   function bindToolbar(root) {
     root.getElementById('tgl').onclick = toggleDemo;
     root.getElementById('prof').onchange = (e) => setProfile(e.target.value);
+    root.getElementById('vars').onclick = toggleVars;
     root.getElementById('rld').onclick = () => location.reload();
     root.getElementById('hid').onclick = toggleToolbar;
   }
@@ -357,6 +387,169 @@
     }
     sel.value = state.activeProfile;
     sel.style.display = names.length > 1 ? '' : 'none';
+  }
+
+  // ---------- variables table (in-page modal) ----------
+  // The popup edits variables in a cramped textarea; JSON list variables are unreadable there.
+  // This modal shows the active profile's variables as a table in the same shadow DOM as the
+  // toolbar, and edits them through the same save path the toolbar uses.
+  let varsDlg = null;
+  let varsKeyHandler = null;
+
+  function missingVars() {
+    // {{names}} used by rules that apply here but are not defined in the active profile. fill()
+    // leaves unknown placeholders alone, so those rules run with the real data - worth showing.
+    const vars = state.profiles[state.activeProfile] || {};
+    const missing = new Set();
+    for (const rule of state.rules) {
+      if (rule.disabled) continue;
+      if (!hostMatches(rule.host || '') || !pageMatches(rule.page)) continue;
+      for (const m of String(rule.value || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
+        if (m[1] && !hasOwn(vars, m[1])) missing.add(m[1]);
+      }
+    }
+    return [...missing];
+  }
+
+  function toggleVars() {
+    if (varsDlg) { closeVars(); return; }
+    if (!IS_TOP) return;
+    openVars();
+  }
+
+  async function openVars() {
+    await load();                    // the popup may have switched the profile while we were idle
+    if (!state.profiles[state.activeProfile] && Object.keys(state.profiles).length) {
+      state.activeProfile = Object.keys(state.profiles)[0];
+    }
+    const root = ensureUI();
+    const dlg = document.createElement('div');
+    dlg.className = 'vdlg';
+    dlg.innerHTML = `
+      <div class="vhead"><h3>Variables <select id="vprof"></select></h3>
+        <button id="vclose" title="Close (Esc)">x</button></div>
+      <div class="vhint">Click a value to edit it. Enter or clicking away saves, Esc cancels. A value can be any text, including a whole JSON list.</div>
+      <div class="vmiss" id="vmiss" style="display:none"></div>
+      <div class="vscroll"><table class="vtable">
+        <thead><tr><th style="width:170px">Variable</th><th>Value</th><th style="width:26px"></th></tr></thead>
+        <tbody id="vrows"></tbody></table></div>
+      <div class="vadd"><input class="k" id="vnewk" placeholder="new_name"><input id="vnewv" placeholder="value">
+        <button id="vadd" class="primary">Add</button></div>`;
+    root.appendChild(dlg);
+    varsDlg = dlg;
+    dlg.querySelector('#vclose').onclick = closeVars;
+    dlg.querySelector('#vprof').onchange = async (e) => {
+      await setProfile(e.target.value);      // saves, re-applies, reloads the page when API data changed
+      refreshVars();
+    };
+    dlg.querySelector('#vadd').onclick = addVar;
+    for (const id of ['vnewk', 'vnewv']) {
+      dlg.querySelector('#' + id).addEventListener('keydown', (e) => { if (e.key === 'Enter') addVar(); });
+    }
+    varsKeyHandler = (e) => {
+      if (e.key !== 'Escape') return;
+      const ed = dlg.querySelector('textarea');
+      if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, second closes
+      else closeVars();
+    };
+    window.addEventListener('keydown', varsKeyHandler, true);
+    refreshVars();
+  }
+
+  function closeVars() {
+    if (!varsDlg) return;
+    varsDlg.remove();
+    varsDlg = null;
+    if (varsKeyHandler) { window.removeEventListener('keydown', varsKeyHandler, true); varsKeyHandler = null; }
+  }
+
+  function refreshVars() {
+    if (!varsDlg) return;
+    const dlg = varsDlg;
+    const sel = dlg.querySelector('#vprof');
+    sel.replaceChildren(...Object.keys(state.profiles).map((n) => {
+      const o = document.createElement('option'); o.value = o.textContent = n; return o;
+    }));
+    sel.value = state.activeProfile;
+    const missing = missingVars();
+    const miss = dlg.querySelector('#vmiss');
+    if (missing.length) {
+      miss.style.display = '';
+      miss.textContent = 'Used by rules but missing in this profile (those rules keep the real data): ' + missing.join(', ');
+    } else {
+      miss.style.display = 'none';
+    }
+    const vars = state.profiles[state.activeProfile] || {};
+    const rows = dlg.querySelector('#vrows');
+    rows.replaceChildren();
+    for (const [k, v] of Object.entries(vars)) {
+      const tr = document.createElement('tr');
+      const name = document.createElement('td');
+      name.className = 'vname';
+      name.textContent = k;
+      const val = document.createElement('td');
+      const cell = document.createElement('div');
+      cell.className = 'vval clamp';
+      cell.textContent = String(v);
+      cell.title = String(v).slice(0, 400);
+      cell.onclick = () => editVar(cell, k);
+      val.appendChild(cell);
+      const del = document.createElement('td');
+      const x = document.createElement('button');
+      x.className = 'vdel';
+      x.textContent = '✕';
+      x.title = 'Delete variable';
+      x.onclick = async () => { await writeVar(k, null); refreshVars(); };
+      del.appendChild(x);
+      tr.append(name, val, del);
+      rows.appendChild(tr);
+    }
+    if (!Object.keys(vars).length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 3;
+      td.style.cssText = 'color:#6b7280;font-size:12px;padding:10px;';
+      td.textContent = 'No variables yet — add one below (for example company = Acme Corp).';
+      tr.appendChild(td);
+      rows.appendChild(tr);
+    }
+  }
+
+  function editVar(cell, key) {
+    const td = cell.parentElement;
+    const original = String((state.profiles[state.activeProfile] || {})[key] ?? '');
+    const ta = document.createElement('textarea');
+    ta.value = original;
+    td.replaceChildren(ta);
+    ta.focus();
+    ta.onblur = async () => {
+      if (ta.dataset.cancel) { refreshVars(); return; }
+      if (ta.value === original) { refreshVars(); return; }
+      await writeVar(key, ta.value);
+      refreshVars();
+    };
+    ta.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); }   // Enter saves, Shift+Enter is a new line
+    };
+  }
+
+  async function writeVar(name, value) {
+    if (!name) return;
+    await load();                      // merge with whatever the popup changed in the meantime
+    const p = state.profiles[state.activeProfile] || (state.profiles[state.activeProfile] = {});
+    if (value === null) delete p[name]; else p[name] = value;
+    await save();
+    apply();
+    afterChange();                     // API data is filled once per page load: reload when it changed
+  }
+
+  async function addVar() {
+    if (!varsDlg) return;
+    const k = varsDlg.querySelector('#vnewk').value.trim();
+    const v = varsDlg.querySelector('#vnewv').value;
+    if (!k) { varsDlg.querySelector('#vnewk').focus(); return; }
+    await writeVar(k, v);
+    refreshVars();
   }
 
   // ---------- page scan (for the AI assistant) and broken-rule check ----------
@@ -664,6 +857,10 @@
       if (msg.name === 'toggle-demo') toggleDemo();
       else if (msg.name === 'next-profile') nextProfile();
       else if (msg.name === 'toggle-toolbar') toggleToolbar();
+      else if (msg.name === 'toggle-vars') toggleVars();
+      sendResponse({ ok: true });
+    } else if (msg && msg.type === 'openVars') {
+      openVars();
       sendResponse({ ok: true });
     } else if (msg && msg.type === 'scan') {
       sendResponse({ ok: true, elements: scanPage() });

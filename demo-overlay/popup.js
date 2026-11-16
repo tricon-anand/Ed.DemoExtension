@@ -423,6 +423,15 @@ async function init() {
     flash('Variables saved');
   };
 
+  $('openVars').onclick = async () => {
+    try {
+      await pageMessage({ type: 'openVars' });
+      flash('Variable table opened on the page');
+    } catch (e) {
+      flash(e.message);
+    }
+  };
+
   $('pick').onclick = async () => {
     await refreshTab();
     if (!activeTab) return;
