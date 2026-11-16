@@ -27,7 +27,7 @@ Click the extension icon to open the side panel. It has three views:
 
 - **Log in** — the only thing shown until you have a session (API URL, email, password). **Log out** sits at the top bar.
 - **Main** — what you use to present:
-  - **Scenario** — pick one and press **Load / Sync**.
+  - **Scenario** — pick one and it loads at once. The refresh icon next to it re-downloads it from the server.
   - **Profile** — switch profiles, with **New**, **Edit** and **Delete**. **Edit** opens the variables table as a modal over the page: edits preview live on the page, and **Save** asks whether to update the existing profile or save it as a new one. Esc or the X with unsaved edits opens the same choice; **Discard** reverts.
   - **AI assistant** — describe the demo, **Build with AI**, review what streams in, **Apply**.
   - **Import / Export scenario** — paste or copy scenario JSON.

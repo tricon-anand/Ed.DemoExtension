@@ -34,6 +34,11 @@ function save() {
   return chrome.storage.local.set({ [KEY]: state });
 }
 
+// Rule changes are local first; this tells the server too, so a later sync does not undo them.
+function syncRule(type, ruleId, changes) {
+  send({ type, ruleId, changes }).then((r) => r && r.ok === false && flash('Not saved to the server: ' + r.error));
+}
+
 function flash(msg) {
   $('status').textContent = msg;
   setTimeout(() => ($('status').textContent = ''), 2500);
@@ -74,6 +79,7 @@ function render() {
     chk.onchange = async () => {
       rule.disabled = !chk.checked;
       await save();
+      syncRule('updateRule', rule.id, { disabled: rule.disabled });
     };
     const tag = document.createElement('span');
     tag.className = 'tag';
@@ -90,6 +96,7 @@ function render() {
       state.rules = state.rules.filter((r) => r !== rule);
       await save();
       render();
+      syncRule('deleteRule', rule.id);
     };
     meta.append(chk, tag, s, del);
     div.appendChild(meta);
@@ -102,6 +109,7 @@ function render() {
         rule.value = input.value;
         await save();
         flash('Saved');
+        syncRule('updateRule', rule.id, { value: rule.value });
       };
       div.appendChild(input);
     }
@@ -158,17 +166,21 @@ async function initServer() {
     renderServer();
   };
 
-  $('syncBtn').onclick = async () => {
+  // Picking a scenario loads it at once, so the profiles and rules shown always belong to the scenario in the
+  // dropdown. The refresh icon re-downloads the current scenario from the server.
+  const syncScenario = async (force) => {
     const id = Number($('scenarioSel').value);
     if (!id) return;
-    serverMsg('Syncing...');
-    const r = await send({ type: 'loadScenario', scenarioId: id });
+    serverMsg('Loading...');
+    const r = await send({ type: 'loadScenario', scenarioId: id, force });
     if (!r.ok) return serverMsg(r.error, true);
     await load(); // re-read the cached bundle the worker just wrote
     render();
     serverMsg(r.changed ? 'Loaded version ' + r.version : 'Already up to date (v' + r.version + ')');
     renderServer();
   };
+  $('scenarioSel').onchange = () => syncScenario(true);   // a different scenario: always fetch it fresh
+  $('syncBtn').onclick = () => syncScenario(true);
 
   $('logoutBtn').onclick = async () => {
     await send({ type: 'logout' });
@@ -631,7 +643,7 @@ async function aiStream(body, onEvent) {
   const { auth } = await chrome.storage.local.get('auth');
   if (!auth || !auth.token) throw new Error('Log in first.');
   const st = await send({ type: 'status' });
-  if (!st.scenarioId) throw new Error('Choose a scenario and press Load / Sync first. Importing JSON does not count.');
+  if (!st.scenarioId) throw new Error('Pick a scenario in the dropdown first (or press the refresh icon). Importing JSON does not count.');
   const base = (st.apiBase || 'http://localhost:8001').replace(/\/+$/, '');
   let res;
   try {

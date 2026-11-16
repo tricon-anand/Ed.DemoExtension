@@ -96,6 +96,40 @@ async function pushRule(rule) {
   return loadScenario(server.scenarioId, true);
 }
 
+// The bundle gives every server rule the id "r<number>"; rules that never reached the server have no such id.
+function serverRuleId(ruleId) {
+  const m = /^r(\d+)$/.exec(String(ruleId || ''));
+  return m ? Number(m[1]) : null;
+}
+
+async function deleteRule({ ruleId }) {
+  const server = await store.get('server');
+  const id = serverRuleId(ruleId);
+  if (!server || !(await store.get('auth')) || !id) return { ok: true, skipped: true };
+  try {
+    await call(`/rules/${id}`, { method: 'DELETE' });
+  } catch (e) {
+    if (!/not found/i.test(e.message)) return { ok: false, error: e.message };   // already gone is fine
+  }
+  return loadScenario(server.scenarioId, true);
+}
+
+// changes: any of { value, disabled, selector }. The bundle's values have filters already expanded, so the
+// stored rule is fetched first and only the changed fields are overwritten (host, page, position are kept).
+async function updateRule({ ruleId, changes }) {
+  const server = await store.get('server');
+  const id = serverRuleId(ruleId);
+  if (!server || !(await store.get('auth')) || !id) return { ok: true, skipped: true };
+  const list = await call(`/scenarios/${server.scenarioId}/rules`);
+  const cur = (list.data || []).find((r) => r.id === id);
+  if (!cur) return loadScenario(server.scenarioId, true);                      // deleted elsewhere: just resync
+  const body = { selector: cur.selector, type: cur.type, value: cur.value, host: cur.host, page: cur.page,
+                 disabled: cur.disabled, position: cur.position };
+  for (const k of ['value', 'disabled', 'selector']) if (changes && k in changes) body[k] = changes[k];
+  await call(`/rules/${id}`, { method: 'PUT', body });
+  return loadScenario(server.scenarioId, true);
+}
+
 async function saveProfile({ name, variables, oldName }) {
   const server = await store.get('server');
   if (!server || !(await store.get('auth'))) return { ok: true, skipped: true };
@@ -145,7 +179,7 @@ async function deleteProfile({ name }) {
 async function server() {
   if (!(await store.get('auth'))) throw new Error('Log in first (Server section at the top of the popup).');
   const s = await store.get('server');
-  if (!s) throw new Error('Choose a scenario in the Server section and press Load / Sync first. Importing JSON does not count.');
+  if (!s) throw new Error('Pick a scenario in the dropdown first (or press the refresh icon). Importing JSON does not count.');
   return s;
 }
 
@@ -172,6 +206,8 @@ async function handle(msg) {
     }
     case 'loadScenario': return loadScenario(msg.scenarioId, !!msg.force);
     case 'pushRule': return pushRule(msg.rule);
+    case 'deleteRule': return deleteRule(msg);
+    case 'updateRule': return updateRule(msg);
     case 'saveProfile': return saveProfile(msg);
     case 'deleteProfile': return deleteProfile(msg);
     case 'track': await track(msg.event, null, msg); return { ok: true };

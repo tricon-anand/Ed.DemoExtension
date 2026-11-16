@@ -901,6 +901,15 @@
     }
   }
 
+  // Rule changes made here are local first (instant preview); this tells the server too, otherwise the next
+  // sync would bring a deleted rule back and drop edits. Rules that never reached the server are skipped.
+  function syncRule(type, ruleId, changes) {
+    chrome.runtime
+      .sendMessage({ type, ruleId, changes })
+      .then((r) => r && r.ok === false && toast('Not saved to the server: ' + r.error))
+      .catch(() => {});
+  }
+
   function refreshRules() {
     if (!rulesDlg) return;
     const rows = rulesDlg.querySelector('#rrows');
@@ -946,6 +955,7 @@
         await save();
         apply();
         refreshRules();
+        syncRule('updateRule', rule.id, { disabled: rule.disabled });
       };
       tdActive.appendChild(chk);
 
@@ -1010,6 +1020,7 @@
         apply();
         refreshRules();
         toast('Rule deleted');
+        syncRule('deleteRule', rule.id);
       };
       tdDel.appendChild(delBtn);
 
@@ -1042,6 +1053,7 @@
       apply();
       toast('Rule updated');
       refreshRules();
+      syncRule('updateRule', rule.id, { value: rule.value });
     };
 
     inp.onblur = () => finish(true);
