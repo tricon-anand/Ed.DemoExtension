@@ -619,7 +619,7 @@ def test_groq_sends_fewer_captured_endpoints(monkeypatch):
             return NS(content=[], stop_reason="end_turn")
     spy = Spy(); spy.messages = spy
     agent_mod.run_builder(spy, "x y z", [], api_caps=caps)
-    assert "e7" in sent[0] and "e8" not in sent[0]
+    assert "e15" in sent[0] and "e16" not in sent[0]
     # validation still checks against every capture, even the ones cut from the prompt
     b = agent_mod.Builder([], (), None, caps)
     out = b.propose_rule("*/api/e12*", "api", '[{"path":"k","value":"1"}]')

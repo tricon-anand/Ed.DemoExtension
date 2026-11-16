@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from app.formatting import FILTERS, FILTER_EXPR, PLAIN_EXPR
 from app.services import VALID_TYPES
 
-MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "10"))
+MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "20"))
 RESERVED = {"_locale", "_currency"}
 
 
@@ -757,7 +757,7 @@ def run_builder(client, brief, snapshot=None, existing_selectors=(), research=Fa
         prompt += "\nThis is a TARGETED edit: propose only the rule(s) and variable(s) needed for what was asked, nothing else.\n"
     if b.api_caps:
         # small free-plan token limits: send fewer captured endpoints (override with AGENT_MAX_ENDPOINTS)
-        cap = int(os.getenv("AGENT_MAX_ENDPOINTS") or (8 if provider() == "groq" else 20))
+        cap = int(os.getenv("AGENT_MAX_ENDPOINTS") or (16 if provider() == "groq" else 20))
         section = _api_section(b.api_caps[:cap])
         if section:
             prompt += ("\nCAPTURED API RESPONSES - PRIMARY SOURCE for data, lists, tables and metrics loaded via API.\n"

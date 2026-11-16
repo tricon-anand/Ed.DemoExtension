@@ -41,7 +41,7 @@ Every agent request is recorded with real runtime data — no mock data. A `Reco
 
 ## Choosing the AI provider
 
-Set one key in the terminal that starts uvicorn: `ANTHROPIC_API_KEY` (Claude) or `GROQ_API_KEY` (Groq). With both set, Anthropic is used unless `AGENT_PROVIDER=groq`. `AGENT_MODEL` overrides the model (defaults: `claude-sonnet-5-5`, `llama-3.3-70b-versatile`). "Research the prospect on the web" works with Anthropic only. Any other OpenAI-compatible service can be added by pointing `GROQ_BASE_URL` at it.
+Set one key in the terminal that starts uvicorn: `ANTHROPIC_API_KEY` (Claude) or `GROQ_API_KEY` (Groq). With both set, Anthropic is used unless `AGENT_PROVIDER=groq`. `AGENT_MODEL` overrides the model (defaults: `claude-sonnet-5-5`, `llama-3.3-70b-versatile`). "Research the prospect on the web" works with Anthropic only. Any other OpenAI-compatible service can be added by pointing `GROQ_BASE_URL` at it. `AGENT_MAX_ENDPOINTS` (default 16 on Groq, 20 otherwise) caps how many captured API endpoints the build prompt shows, and `AGENT_MAX_STEPS` (default 20) the number of model turns per run — raise both when one brief should cover many endpoints at once.
 
 ## Production checklist
 
