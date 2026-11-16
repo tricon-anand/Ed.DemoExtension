@@ -43,6 +43,11 @@ Every agent request is recorded with real runtime data — no mock data. A `Reco
 
 Set one key in the terminal that starts uvicorn: `ANTHROPIC_API_KEY` (Claude) or `GROQ_API_KEY` (Groq). With both set, Anthropic is used unless `AGENT_PROVIDER=groq`. `AGENT_MODEL` overrides the model (defaults: `claude-sonnet-5-5`, `llama-3.3-70b-versatile`). "Research the prospect on the web" works with Anthropic only. Any other OpenAI-compatible service can be added by pointing `GROQ_BASE_URL` at it. `AGENT_MAX_ENDPOINTS` (default 16 on Groq, 20 otherwise) caps how many captured API endpoints the build prompt shows, and `AGENT_MAX_STEPS` (default 20) the number of model turns per run — raise both when one brief should cover many endpoints at once.
 
+## API mode (default) and full mode
+
+`AGENT_MODE=api` (the default) makes the assistant build **api rules only**, from the JSON responses the page loaded, with its own short prompt (`API_SYSTEM` in `app/agent.py`). The page snapshot is not sent and page-text rules (text, hide, image, html) are refused. A build with no captured responses is rejected up front with a clear message. Every api rule is checked against the captures: an endpoint or path they do not show is an error the model must fix (an edit on a missing key would be silently ignored by the extension). Applying a proposal for an endpoint that already has a rule **updates** that rule's value instead of dropping it, and the response reports `rules_added` and `rules_updated`. Results always land in the profile the presenter is working in.
+`AGENT_MODE=full` brings back the original prompt that also writes page-text rules from a snapshot.
+
 ## Production checklist
 
 1. `APP_ENV=production` and a real `SECRET_KEY` (the server refuses to start otherwise).

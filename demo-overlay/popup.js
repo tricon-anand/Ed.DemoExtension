@@ -1,6 +1,7 @@
 const KEY = 'demo';
 let state = { enabled: false, activeProfile: '', profiles: {}, rules: [] };
 let tabHost = '';
+let scenarioHosts = {};      // scenario id -> its target host, for the "wrong site" check before an AI build
 let activeTab = null;
 let settingsOpen = false;   // the gear swaps the main view for the settings view
 
@@ -133,7 +134,6 @@ async function renderServer() {
   $('settingsBtn').style.display = st.loggedIn ? '' : 'none';
   $('logoutBtn').style.display = st.loggedIn ? '' : 'none';
   if (!st.loggedIn) {
-    $('apiBase').value = st.apiBase;
     return;
   }
   $('who').textContent = st.email + ' (' + st.role + ')' + (st.version ? ' · synced v' + st.version : '');
@@ -141,7 +141,9 @@ async function renderServer() {
   const sel = $('scenarioSel');
   sel.innerHTML = '';
   if (!r.ok) return serverMsg(r.error, true);
+  scenarioHosts = {};
   r.scenarios.forEach((s) => {
+    scenarioHosts[s.id] = s.target_host || '';
     const o = document.createElement('option');
     o.value = s.id;
     o.textContent = s.name;
@@ -156,7 +158,6 @@ async function initServer() {
     serverMsg('Logging in...');
     const r = await send({
       type: 'login',
-      apiBase: $('apiBase').value.trim(),
       email: $('email').value.trim(),
       password: $('password').value,
     });
@@ -708,7 +709,16 @@ function initAI() {
       if (!apiJson.length) {
         throw new Error('No API responses captured yet. Please reload the test page so the extension intercepts the API requests, then click Build again.');
       }
-      aiMsg('Building API scenario from ' + apiJson.length + ' captured endpoint' + (apiJson.length === 1 ? '' : 's') + '...');
+      // The captures come from the tab you are on right now. On another site they would give rules that
+      // pass every check and then do nothing on the real demo app, so ask first.
+      const target = scenarioHosts[Number($('scenarioSel').value)] || '';
+      if (target && tabHost && !ruleHostMatches(target, tabHost)
+          && !confirm(`You are on "${tabHost}", but this scenario is for "${target}".\n\nThe assistant would build from this page's API calls, and the rules may not work on "${target}".\n\nTo stop this warning, set the scenario's "App host" to the real site (or clear it) in the admin page.\n\nBuild anyway?`)) {
+        aiMsg('Build cancelled. Open ' + target + ', reload it, then press Build again.');
+        return;
+      }
+      aiMsg('Building API scenario from ' + apiJson.length + ' captured endpoint' + (apiJson.length === 1 ? '' : 's')
+        + (tabHost ? ' captured on ' + tabHost : '') + '...');
       paint();
       let final = null;
       await aiStream({ brief, snapshot: [], api_json: apiJson, host: tabHost, profile: state.activeProfile }, (kind, ev) => {
@@ -744,10 +754,12 @@ function initAI() {
     busy(true);
     const warns = [];
     let activeProfile = '';
+    let added = 0, updated = 0;
     try {
       for (const run of aiRuns) {
         const r = await send({ type: 'aiApply', runId: run.id, allowIncomplete: !!run.incomplete });
         if (!r.ok) throw new Error(r.error);
+        if (r.result) { added += r.result.rules_added || 0; updated += r.result.rules_updated || 0; }
         if (r.result && Array.isArray(r.result.warnings)) warns.push(...r.result.warnings);
         if (r.result && Array.isArray(r.result.profiles_touched) && r.result.profiles_touched.length) {
           activeProfile = r.result.profiles_touched[0];     // the extension switched to the profile the run built for
@@ -757,6 +769,7 @@ function initAI() {
       $('aiApply').style.display = 'none';
       await load(); render();
       aiMsg('Applied and synced' + (activeProfile ? ' to profile "' + activeProfile + '"' : '')
+        + ` (${added} rule${added === 1 ? '' : 's'} added, ${updated} updated)`
         + '. Reload the page to see it.'
         + (warns.length ? '\nWarnings: ' + warns.join(' ') : ''));
     } catch (e) { aiMsg(e.message, true); } finally { busy(false); }

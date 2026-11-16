@@ -573,39 +573,43 @@ def test_captured_apis_are_summarized_in_the_prompt():
     assert "CAPTURED API RESPONSES" not in sent[0]                          # nothing captured: prompt unchanged
 
 
-def test_api_paths_are_nudged_towards_captured_structure():
-    def note_for(value, selector="*/api/students*"):
+def test_api_paths_must_match_captured_structure():
+    def out_for(value, selector="*/api/students*"):
         # a fresh Builder per call: a second api rule for the same selector would be a duplicate
         return agent_mod.Builder([], (), None, [STUDENTS_CAP]).propose_rule(selector, "api", value)
 
-    assert "NOTE" not in note_for('[{"path":"students[*].grade","value":"A"}]')       # a path the capture shows
-    whole = note_for('[{"path":"students","value":"{{students_json}}"}]')
-    assert whole.startswith("OK") and "NOTE" not in whole                  # wholesale replace of a shown key
-    filled = note_for('[{"path":"summary.total","value":"{{n}}"}]')
-    assert filled.startswith("OK") and "NOTE" not in filled               # a placeholder is not checkable yet
-    scalar = note_for('[{"path":"summary.total","value":"5"}]')
-    assert scalar.startswith("OK") and "summary.total" in scalar and "NOTE" in scalar       # nudge, not an error
-    unmatched = note_for('[{"path":"x","value":"1"}]', "*/api/other*")
-    assert unmatched.startswith("OK") and "no captured response matches" in unmatched
-    # a nudged rule is still a valid rule: not flagged as a proposal problem
-    assert agent_mod.proposal_problems([{"type": "api", "value": '[{"path":"summary.total","value":"5"}]'}],
-                                       {"Texas": {"n": "1"}}) == []
+    assert out_for('[{"path":"students[*].grade","value":"A"}]').startswith("OK")        # a path the capture shows
+    assert out_for('[{"path":"students","value":"{{students_json}}"}]').startswith("OK")  # wholesale replace of a shown key
+    assert out_for('[{"path":"summary.total","value":"{{n}}"}]').startswith("OK")         # placeholder: checked at finish
+    scalar = out_for('[{"path":"summary.totl","value":"5"}]')
+    assert scalar.startswith("ERROR") and "summary.totl" in scalar                       # a wrong path is a hard error
+    unmatched = out_for('[{"path":"x","value":"1"}]', "*/api/other*")
+    assert unmatched.startswith("ERROR") and "no captured response matches" in unmatched
+    # no captures at all: nothing to check against, so the rule is accepted
+    assert agent_mod.Builder([], (), None, []).propose_rule("*/api/x*", "api", '[{"path":"a","value":"1"}]').startswith("OK")
+
+
+def test_placeholder_at_a_missing_path_is_checked_once_the_profile_exists():
+    b = agent_mod.Builder([], (), None, [STUDENTS_CAP])
+    assert b.propose_rule("*/api/students*", "api", '[{"path":"highlights","value":"{{h}}"}]').startswith("OK")
+    b.propose_profile("P", {"h": "just text"})
+    assert any("highlights" in x for x in b.problems())                  # a scalar there would be ignored
+    b.propose_profile("P", {"h": '["One district"]'})
+    assert not any("highlights" in x for x in b.problems())              # a whole list creates the key
 
 
 def test_captured_paths_accept_new_keys_and_exact_indexes():
-    def note_for(value):
+    def out_for(value):
         return agent_mod.Builder([], (), None, [STUDENTS_CAP]).propose_rule("*/api/students*", "api", value)
 
-    # a missing key with a whole-list value is the "highlights" pattern: created on purpose, no nudge
-    ok = note_for('[{"path":"highlights","value":"[\\"One district\\"]"}]')
-    assert ok.startswith("OK") and "NOTE" not in ok
-    ok2 = note_for('[{"path":"highlights","value":"{{highlights_json}}"}]')
-    assert ok2.startswith("OK") and "NOTE" not in ok2                     # same, via a profile variable
-    assert "NOTE" not in note_for('[{"path":"students[0].grade","value":"A"}]')
-    assert "NOTE" not in note_for('[{"path":"term","value":"Spring"}]')
-    nudged = note_for('[{"path":"students[9].grade","value":"A"}]')
-    assert "NOTE" in nudged and "students[9].grade" in nudged              # beyond the captured 3 items
-    assert note_for('[{"path":"GET students","value":"x"}]').startswith("ERROR")
+    # a missing key with a whole-list value is the "highlights" pattern: created on purpose
+    assert out_for('[{"path":"highlights","value":"[\\"One district\\"]"}]').startswith("OK")
+    assert out_for('[{"path":"highlights","value":"{{highlights_json}}"}]').startswith("OK")
+    assert out_for('[{"path":"students[0].grade","value":"A"}]').startswith("OK")
+    assert out_for('[{"path":"term","value":"Spring"}]').startswith("OK")
+    beyond = out_for('[{"path":"students[9].grade","value":"A"}]')
+    assert beyond.startswith("ERROR") and "students[9].grade" in beyond      # beyond the captured 3 items
+    assert out_for('[{"path":"GET students","value":"x"}]').startswith("ERROR")
 
 
 def test_groq_sends_fewer_captured_endpoints(monkeypatch):
@@ -625,7 +629,7 @@ def test_groq_sends_fewer_captured_endpoints(monkeypatch):
     # validation still checks against every capture, even the ones cut from the prompt
     b = agent_mod.Builder([], (), None, caps)
     out = b.propose_rule("*/api/e12*", "api", '[{"path":"k","value":"1"}]')
-    assert out.startswith("OK") and "NOTE" not in out
+    assert out.startswith("OK")
 
 
 def test_capture_block_fits_small_token_budgets(monkeypatch):
@@ -682,3 +686,70 @@ def test_without_target_profile_names_are_kept():
     b = agent_mod.Builder(SNAP)
     b.propose_profile("Texas", {"a": "1"})
     assert [x["name"] for x in b.proposal()["profiles"]] == ["Texas"]
+
+
+def test_api_mode_uses_its_own_prompt_and_refuses_page_text_rules(monkeypatch):
+    seen = {}
+
+    def fake_loop(client, system, tools, first, handlers, done, **kw):
+        seen.update(system=system, tools=tools, first=first)
+        r = handlers["propose_rule"]("#a", "text", "x")
+        seen["text_rule"] = r
+        return []
+
+    monkeypatch.setattr(agent_mod, "_loop", fake_loop)
+    agent_mod.run_builder(None, "make it Dubai", SNAP, api_caps=[STUDENTS_CAP], mode="api")
+    assert seen["system"] == agent_mod.API_SYSTEM and "never change page text" in seen["system"].lower()
+    assert seen["text_rule"].startswith("ERROR") and "only api rules" in seen["text_rule"]
+    assert "Page snapshot" not in seen["first"]                      # the page text is not sent in api mode
+    rule_tool = next(t for t in seen["tools"] if t["name"] == "propose_rule")
+    assert rule_tool["input_schema"]["properties"]["type"]["enum"] == ["api"]
+    agent_mod.run_builder(None, "make it Dubai", SNAP, mode="full")
+    assert seen["system"] == agent_mod.SYSTEM and "Page snapshot" in seen["first"]
+
+
+def test_agent_mode_defaults_to_api(monkeypatch):
+    monkeypatch.delenv("AGENT_MODE", raising=False)
+    assert agent_mod.agent_mode() == "api"
+    monkeypatch.setenv("AGENT_MODE", "full")
+    assert agent_mod.agent_mode() == "full"
+
+
+def test_api_mode_build_needs_captured_responses(client, org_a, fake_agent, monkeypatch):
+    monkeypatch.setenv("AGENT_MODE", "api")
+    fake_agent(GOOD)
+    sid = mk(client, org_a)
+    r = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "make it Dubai"}, headers=org_a)
+    assert r.status_code == 422 and "No API responses were captured" in r.json()["detail"]
+
+
+def _api_run(client, org_a, fake_agent, value):
+    fake_agent([[tool("propose_rule", selector="*/api/students*", type="api", value=value),
+                 tool("propose_profile", name="Whatever", variables={"n": "5"}),
+                 tool("finish", summary="ok")]])
+    sid = mk(client, org_a)
+    return sid
+
+
+def test_apply_updates_an_existing_rule_instead_of_dropping_it(client, org_a, fake_agent, monkeypatch):
+    monkeypatch.setenv("AGENT_MODE", "api")
+    cap = [{"url": "http://x.test/api/students", "method": "GET", "body": '{"summary": {"total": 3}}'}]
+    sid = _api_run(client, org_a, fake_agent, '[{"path":"summary.total","value":"{{n}}"}]')
+    resp = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "x y z", "api_json": cap}, headers=org_a)
+    run = resp.json()
+    ap = client.post(f"/agent/runs/{run['run_id']}/apply", headers=org_a).json()
+    assert ap["rules_added"] == 1 and ap["rules_updated"] == 0
+
+    # a second build for the same endpoint with a different value must replace the stored value
+    _api_run(client, org_a, fake_agent, '[{"path":"summary.total","value":"99"}]')
+    run2 = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "x y z", "api_json": cap}, headers=org_a).json()
+    ap2 = client.post(f"/agent/runs/{run2['run_id']}/apply", headers=org_a).json()
+    assert ap2["rules_added"] == 0 and ap2["rules_updated"] == 1
+    rules = client.get(f"/scenarios/{sid}/rules", headers=org_a).json()
+    assert len(rules) == 1 and rules[0]["value"] == '[{"path":"summary.total","value":"99"}]'
+
+    # the very same proposal again changes nothing
+    _api_run(client, org_a, fake_agent, '[{"path":"summary.total","value":"99"}]')
+    run3 = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "x y z", "api_json": cap}, headers=org_a).json()
+    ap3 = client.post(f"/agent/runs/{run3['run_id']}/apply", headers=org_a).json()
+    assert ap3["rules_added"] == 0 and ap3["rules_updated"] == 0

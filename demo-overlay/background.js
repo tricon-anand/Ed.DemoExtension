@@ -1,4 +1,6 @@
 // Demo Overlay - background service worker: talks to the FastAPI server.
+// POC: the backend (accounts, scenarios, AI) is always this address. There is no API URL to type in the popup;
+// to point at another server, change this one line.
 const DEFAULT_API = 'http://localhost:8001';
 
 const store = {
@@ -9,7 +11,7 @@ const store = {
 
 async function call(path, { method = 'GET', body, headers = {}, auth, keepSession = false } = {}) {
   auth = auth || (await store.get('auth'));
-  const base = ((auth && auth.apiBase) || DEFAULT_API).replace(/\/+$/, '');
+  const base = DEFAULT_API;
   const h = { ...headers };
   if (auth && auth.token) h.Authorization = 'Bearer ' + auth.token;
   let payload = body;
@@ -19,9 +21,14 @@ async function call(path, { method = 'GET', body, headers = {}, auth, keepSessio
   }
   let res;
   try {
-    res = await fetch(base + path, { method, headers: h, body: payload });
+    // redirect: 'manual' so credentials and data are never silently forwarded to another site
+    res = await fetch(base + path, { method, headers: h, body: payload, redirect: 'manual' });
   } catch (e) {
     throw new Error('Cannot reach server at ' + base);
+  }
+  if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400 && res.status !== 304)) {   // 304 = "not modified" (ETag sync), fine
+    throw new Error(base + ' redirected to another address instead of answering. DEFAULT_API in background.js must be the Demo Overlay '
+      + 'backend (for example http://localhost:8001), not the website you are demoing.');
   }
   if (res.status === 304) return { status: 304, res };
   if (!res.ok) {
@@ -48,20 +55,19 @@ async function status() {
     loggedIn: !!auth,
     email: auth ? auth.email : '',
     role: auth ? auth.role : '',
-    apiBase: (auth && auth.apiBase) || DEFAULT_API,
+    apiBase: DEFAULT_API,
     scenarioId: server ? server.scenarioId : null,
     version: server ? server.version : null,
   };
 }
 
-async function login({ apiBase, email, password }) {
-  apiBase = (apiBase || DEFAULT_API).trim();
+async function login({ email, password }) {
   // FastAPI's OAuth2 form calls the email field "username"
   const form = new URLSearchParams({ username: email, password });
-  const t = await call('/auth/login', { method: 'POST', body: form, auth: { apiBase }, keepSession: true });
+  const t = await call('/auth/login', { method: 'POST', body: form, keepSession: true });
   const token = t.data.access_token;
-  const me = await call('/auth/me', { auth: { apiBase, token } });
-  await store.set({ auth: { apiBase, token, email: me.data.email, role: me.data.role } });
+  const me = await call('/auth/me', { auth: { token } });
+  await store.set({ auth: { token, email: me.data.email, role: me.data.role } });
   return { ok: true };
 }
 

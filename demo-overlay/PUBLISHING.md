@@ -25,6 +25,6 @@
 6. Submit. First review usually takes a few days; broad host permissions can take longer. Reply to reviewer questions with the justifications above.
 
 ## Before you ship to other people
-* Host the server on HTTPS and set `APP_ENV=production` (see the backend README). The popup's API URL must be https.
+* Host the server on HTTPS and set `APP_ENV=production` (see the backend README). The backend address is the `DEFAULT_API` constant at the top of `background.js` and must be https.
 * Agree what may be demoed. Demo data should be invented; never put real customer or patient data into profiles or the AI brief.
 * The "DEMO DATA" badge is always shown on pages where a scenario is active, so nobody mistakes the numbers for real ones.

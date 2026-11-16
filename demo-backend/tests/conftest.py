@@ -2,6 +2,7 @@ import os
 
 os.environ["APP_SKIP_DOTENV"] = "1"          # a developer's real .env must never leak into tests
 os.environ.setdefault("ALLOW_OPEN_REGISTRATION", "true")      # most tests create two organizations
+os.environ.setdefault("AGENT_MODE", "full")     # existing tests cover the full prompt; api mode tests set it explicitly
 os.environ.setdefault("SECRET_KEY", "test-only-secret-key-with-more-than-32-characters")
 
 import pytest

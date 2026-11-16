@@ -47,6 +47,13 @@ def provider() -> str:
     return "groq"
 
 
+def agent_mode() -> str:
+    """AGENT_MODE=api (default) | full. api: the assistant only builds api rules (it rewrites the JSON the page
+    loads) from captured responses, with its own short prompt. full: the original prompt that also writes
+    page-text rules (text, hide, image, html) from a page snapshot. Kept in the code for later."""
+    return "full" if os.getenv("AGENT_MODE", "").strip().lower() == "full" else "api"
+
+
 def model_name() -> str:
     return os.getenv("AGENT_MODEL") or DEFAULT_MODELS[provider()]
 
@@ -243,6 +250,35 @@ LISTS AND TABLES: when the brief asks to change a list of items (students, deals
   container) and note in the summary what you could not verify."""
 
 
+API_SYSTEM = """You build sales-demo data for a Chrome extension that rewrites the JSON responses a web app loads (charts, tables, KPI numbers). You never change page text or HTML.
+A scenario is a set of API RULES plus ONE PROFILE of variables.
+- An api rule has type "api", a selector that is a URL pattern with * wildcards, and a value that is a JSON list of
+  edits, for example [{"path":"kpis.revenue","value":"{{revenue}}"}].
+- A path is dot separated keys with an optional [n] index or [*] for every item (monthly[*].revenue, students[0].grade).
+  It starts with a key of the response, never with [*] and never empty. An edit on a key the response does not have
+  does nothing, so only use paths the captured samples show.
+- An edit value that is itself valid JSON (it starts with { or [) replaces the value at the path WHOLESALE, with any
+  length. That is how a whole list or object is injected.
+- The profile holds the values. {{name}} in an edit value is replaced with the profile's value for it.
+Rules you must follow:
+1. Selectors: copy the pattern of a CAPTURED API RESPONSE exactly as written. Never invent an endpoint or a path.
+   If a tool returns an error, fix it and try again.
+2. All people, patients, students and customers must be INVENTED. Never use real personal data. Names and ids must
+   DIFFER from the ones in the samples, so the audience sees the change.
+3. Whole lists are the default: one edit replaces the array, with a different length if needed, for example
+   [{"path":"students","value":"{{students_json}}"}]. The profile then holds the list as ONE variable whose text is a
+   valid JSON array, for example students_json = [{"id":"S-2001","name":"Oliver Hughes","grade":"A"}]. Follow the item
+   structure of the sample. Inside a list variable numbers stay raw (no separators, no symbols) and there are no
+   {{placeholders}}. Use at most 8 items per list.
+4. Single values: point the path at the key and use {{name}}. Keep numbers plain in the profile (12000, not 12,000).
+   Do not use formatting filters. When only some fields of the items change and the item count stays the same, use
+   indexed or wildcard paths (students[0].grade, students[*].status).
+5. Keep totals and counts (summary.total, count, pagination) consistent with the lists you replace.
+6. Make exactly ONE profile, in ONE propose_profile call that holds every variable. Never call it twice. Every
+   {{name}} used by a rule must be defined in it.
+7. A brief about one specific value: propose only the rule(s) for that value, with a variable name unique to it.
+8. Work like this: one propose_rule call per endpoint, then propose_profile, then finish."""
+
 TARGETED = re.compile(r"\b(update|change|replace|edit|fix|modify|rename)\b|\b(only|just)\b", re.I | re.S)
 NUMERIC_TEXT = re.compile(r"^[\s$€£₹+\-]*\d[\d,.\s]*(%|[kKmMbB])?\s*$")
 API_PATH = re.compile(r"[\w-]+(\[\d+\]|\[\*\])*(\.[\w-]+(\[\d+\]|\[\*\])*)*")
@@ -289,8 +325,9 @@ class Builder:
     `emit(kind, payload)` is called the moment something is accepted, so a caller can
     stream partial results instead of waiting for the whole loop to finish."""
 
-    def __init__(self, snapshot, existing_selectors=(), emit=None, api_caps=None, target_profile=""):
+    def __init__(self, snapshot, existing_selectors=(), emit=None, api_caps=None, target_profile="", api_only=False):
         self.emit = emit
+        self.api_only = api_only        # api mode: page-text rules (text, hide, image, html) are refused
         # the profile the presenter is working in: when set, every proposed variable lands in it (no new personas)
         self.target_profile = (target_profile or "").strip()
         self.snapshot = snapshot or []
@@ -338,17 +375,18 @@ class Builder:
                 out.append(c)
         return out
 
-    def _api_note(self, selector, edits):
-        """A nudge, never an error: a path the captured responses do not show may be a new key the
-        demo deliberately injects (the extension creates missing keys for whole object/list values),
-        and a {{placeholder}} value is only complete after the profile fills it."""
-        caps = [c for c in self._matching_caps(selector) if c["data"] is not None]
-        if self.api_caps and not caps:
-            return (f"NOTE: no captured response matches '{selector}'. The page may not call that URL;"
-                    " build api rules on the endpoints listed under CAPTURED API RESPONSES instead,"
-                    " unless this URL is right for a reason the captures cannot show.")
-        if not caps:
+    def _api_error(self, selector, edits):
+        """With captured responses, an api rule must point at an endpoint and at paths they show. A path
+        the response does not have is silently ignored by the extension, so it would look applied and
+        change nothing: that is an error the model must fix. Two cases stay allowed: a whole JSON
+        object/list value (creates the key on purpose) and a {{placeholder}} value, which is checked
+        once the profile exists (see _path_problems). No captures at all: nothing to check against."""
+        if not self.api_caps:
             return ""
+        caps = [c for c in self._matching_caps(selector) if c["data"] is not None]
+        if not caps:
+            return (f"ERROR: no captured response matches '{selector}'. Use a selector pattern listed under"
+                    " CAPTURED API RESPONSES, copied exactly.")
         missing = []
         for e in edits:
             p = e["path"].strip()
@@ -357,14 +395,38 @@ class Builder:
             v = e.get("value")
             whole = isinstance(v, str) and v.lstrip()[:1] in ("{", "[")
             if whole or "{{" in str(v or ""):
-                continue                      # a new key created on purpose, or not checkable yet
+                continue                      # a new key created on purpose, or checked later
             missing.append(p)
         if not missing:
             return ""
-        return ("NOTE: these paths were not found in the captured response(s) for '" + selector + "': "
-                + ", ".join(missing) + ". A plain value at a missing key is never applied (only whole"
-                " objects/lists can create a key); correct the path, or make the value a whole JSON"
+        return ("ERROR: these paths are not in the captured response(s) for '" + selector + "': "
+                + ", ".join(missing) + ". An edit on a missing key is ignored by the extension. Use a path the"
+                " sample shows (an index must be within the captured items), or make the value a whole JSON"
                 " object/list on purpose.")
+
+    def _path_problems(self):
+        """A {{placeholder}} edit at a path the captures do not show can only work when the variable holds a
+        whole JSON object/list (it then creates the key). Checked here because the profile comes after the rules."""
+        out = []
+        for r in self.rules:
+            if r["type"] != "api" or not self.api_caps:
+                continue
+            caps = [c for c in self._matching_caps(r["selector"]) if c["data"] is not None]
+            try:
+                edits = json.loads(r["value"])
+            except ValueError:
+                continue
+            for e in edits:
+                p, v = str(e.get("path", "")).strip(), str(e.get("value", ""))
+                if not caps or "{{" not in v or any(_path_exists(c["data"], _path_tokens(p)) for c in caps):
+                    continue
+                for name, _ in _placeholders(v):
+                    for pname, vars_ in self.profiles.items():
+                        if str(vars_.get(name, "")).strip()[:1] not in ("{", "["):
+                            out.append(f"Path '{p}' is not in the captured response for '{r['selector']}', and "
+                                       f"variable '{name}' in profile '{pname}' is not a whole JSON list/object, so "
+                                       "the edit would be ignored. Use a path the sample shows.")
+        return out
 
     # --- tools ---
     def propose_rule(self, selector="", type="text", value="", reason="", **_):
@@ -373,6 +435,8 @@ class Builder:
             return "ERROR: selector is empty"
         if type not in VALID_TYPES:
             return f"ERROR: type must be one of {sorted(VALID_TYPES)}"
+        if self.api_only and type != "api":
+            return "ERROR: only api rules are supported here. Rewrite the captured API responses instead."
         if type == "api":
             try:
                 edits = json.loads(value)
@@ -394,7 +458,10 @@ class Builder:
                         return ("ERROR: the value for path '" + p + "' looks like JSON but is not valid: " + str(ex) +
                                 ". The extension injects it literally, so it must parse (double quotes, no trailing"
                                 " commas). For a whole list prefer one profile variable holding the JSON array.")
-            note = self._api_note(selector, edits)
+            err = self._api_error(selector, edits)
+            if err:
+                return err
+            note = ""
         elif self.snapshot and selector not in self.known:
             close = [s for s in sorted(self.known) if any(w and w in s for w in re.split(r"\W+", selector)[:3])][:5]
             return ("ERROR: this selector is not in the page snapshot. Use one of the snapshot selectors"
@@ -476,6 +543,7 @@ class Builder:
         if not self.profiles:
             out.append("No profiles were proposed.")
         out.extend(proposal_problems(self.rules, self.profiles, self.targeted))
+        out.extend(self._path_problems())
         return out
 
     def proposal(self):
@@ -528,6 +596,12 @@ TOOLS = [
          "required": ["name", "variables"]}},
     {"name": "finish", "description": "Call once when rules and profiles are complete.",
      "input_schema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}},
+]
+# api mode: the same tools, but a rule can only be of type api
+API_TOOLS = [
+    {**t, "input_schema": {**t["input_schema"], "properties": {**t["input_schema"]["properties"], "type": {"type": "string", "enum": ["api"]}}}}
+    if t["name"] == "propose_rule" else t
+    for t in TOOLS
 ]
 WEB_SEARCH = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
 
@@ -771,15 +845,18 @@ def _api_section(caps):
 
 
 def run_builder(client, brief, snapshot=None, existing_selectors=(), research=False, host="",
-                api_caps=None, recorder=None, emit=None, target_profile=""):
-    b = Builder(snapshot, existing_selectors, emit, api_caps, target_profile)
+                api_caps=None, recorder=None, emit=None, target_profile="", mode=None):
+    api_mode = (mode or agent_mode()) == "api"
+    b = Builder(None if api_mode else snapshot, existing_selectors, emit, api_caps, target_profile, api_only=api_mode)
     b.targeted = bool(TARGETED.search(brief or "")) and len(brief or "") < 400
     prompt = f"Brief from the presenter:\n{brief}\n\nTarget host: {host or '(any)'}\n"
     if b.target_profile:
         prompt += (f"\nThe presenter is working in the existing profile {b.target_profile!r}. Put EVERY variable in ONE "
                    f"propose_profile call named exactly {b.target_profile!r}. Do not invent another profile or persona name.\n")
     if b.targeted:
-        prompt +="\nThis is a TARGETED edit: propose only the rule(s) and variable(s) needed for what was asked, nothing else.\n"
+        prompt += "\nThis is a TARGETED edit: propose only the rule(s) and variable(s) needed for what was asked, nothing else.\n"
+    if api_mode and not b.api_caps:
+        prompt += "\nNo API responses were captured, so there is nothing to rewrite. Call finish and say so in the summary.\n"
     if b.api_caps:
         # small free-plan token limits: send fewer captured endpoints (override with AGENT_MAX_ENDPOINTS)
         cap = int(os.getenv("AGENT_MAX_ENDPOINTS") or (16 if provider() == "groq" else 20))
@@ -798,6 +875,8 @@ def run_builder(client, brief, snapshot=None, existing_selectors=(), research=Fa
                        "Copy the selector pattern as written and use paths the sample shows (replace a whole list or extend "
                        "it with invented items; the item count may differ).\n"
                        + section + "\n")
+    elif api_mode:
+        pass
     elif snapshot:
         # small free-plan token limits: send fewer elements to Groq (override with AGENT_MAX_ELEMENTS)
         limit = int(os.getenv("AGENT_MAX_ELEMENTS") or (60 if provider() == "groq" else 150))
@@ -810,9 +889,10 @@ def run_builder(client, brief, snapshot=None, existing_selectors=(), research=Fa
     research = research and supports_research()
     if research:
         prompt += "\n\nResearch the prospect with web search first (public, company-level facts only) and reflect them in the profiles."
-    tools = TOOLS + ([WEB_SEARCH] if research else [])
+    base_tools = API_TOOLS if api_mode else TOOLS
+    tools = base_tools + ([WEB_SEARCH] if research else [])
     handlers = {"propose_rule": b.propose_rule, "propose_profile": b.propose_profile, "finish": b.finish}
-    trace = _loop(client, SYSTEM, tools, prompt, handlers, lambda: b.finished, recorder=recorder, emit=emit)
+    trace = _loop(client, API_SYSTEM if api_mode else SYSTEM, tools, prompt, handlers, lambda: b.finished, recorder=recorder, emit=emit)
     return b.proposal(), trace
 
 

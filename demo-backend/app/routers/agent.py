@@ -62,6 +62,14 @@ def _client():
         raise HTTPException(status_code=503, detail=str(e))
 
 
+def _need_captures(caps):
+    """API mode rewrites the JSON the page loaded, so without captured responses there is nothing to build on."""
+    if agent_mod.agent_mode() == "api" and not caps:
+        raise HTTPException(status_code=422, detail=(
+            "No API responses were captured yet. Turn Demo data on, reload the app page so the extension can "
+            "record its API calls, then press Build again."))
+
+
 def _run(db, user, sc, kind, brief, fn):
     """fn(client, recorder) -> (proposal, trace).
 
@@ -130,6 +138,7 @@ def build(scenario_id: int, body: BuildIn, db: Session = Depends(get_db), user=D
     snap = [e.model_dump() for e in body.snapshot]
     caps = [c.model_dump() for c in body.api_json]
     existing = [r.selector for r in sc.rules]
+    _need_captures(caps)
     return _run(db, user, sc, "build", body.brief,
                 lambda c, rec: agent_mod.run_builder(c, body.brief, snap, existing, body.research,
                                                      body.host or sc.target_host, api_caps=caps, recorder=rec,
@@ -156,6 +165,7 @@ def build_stream(scenario_id: int, body: BuildIn, db: Session = Depends(get_db),
     snap = [e.model_dump() for e in body.snapshot]
     caps = [c.model_dump() for c in body.api_json]
     existing = [r.selector for r in sc.rules]
+    _need_captures(caps)
     client = _client()                    # raises 503 before the stream starts when no API key is set
 
     run = models.AgentRun(org_id=user.org_id, scenario_id=sc.id, user_email=user.email, kind="build",
@@ -307,7 +317,7 @@ def apply_run(run_id: int, body: ApplyIn | None = None, db: Session = Depends(ge
         raise HTTPException(status_code=409, detail=f"Run is already {run.status}")
     sc = get_org_scenario(db, user, run.scenario_id)
     p = run.proposal
-    added_rules = added_profiles = vars_set = 0
+    added_rules = added_profiles = vars_set = updated_rules = 0
     warnings: list[str] = []
     touched: list[str] = []     # profiles this run created or merged into: they own the new variables
     if run.kind == "repair":
@@ -324,9 +334,14 @@ def apply_run(run_id: int, body: ApplyIn | None = None, db: Session = Depends(ge
                 raise HTTPException(status_code=422, detail="The proposal is incomplete and cannot be applied")
             profiles = {pr["name"]: (pr.get("variables") or {}) for pr in p.get("profiles") or []}
             warnings = agent_mod.proposal_problems(p.get("rules") or [], profiles)
-        have = {(r.selector, r.type) for r in sc.rules}
+        have = {(r.selector, r.type): r for r in sc.rules}
         for r in p["rules"]:
-            if (r["selector"], r["type"]) in have:
+            current = have.get((r["selector"], r["type"]))
+            if current is not None:
+                # the same endpoint again: the new proposal replaces the old value instead of being dropped
+                if current.value != r["value"]:
+                    current.value = r["value"]
+                    updated_rules += 1
                 continue
             # host="*" = every URL. An empty host would fall back to the scenario's target host in
             # the bundle, so the rules would only show on the one app the scenario was built for.
@@ -347,8 +362,8 @@ def apply_run(run_id: int, body: ApplyIn | None = None, db: Session = Depends(ge
             added_profiles += 1
             touched.append(pr["name"])
     run.status = "applied"
-    touch(db, user, sc, "agent.apply", f"run {run.id}: {added_rules} rules, {added_profiles} profiles, {vars_set} variables")
+    touch(db, user, sc, "agent.apply", f"run {run.id}: {added_rules} rules added, {updated_rules} updated, {added_profiles} profiles, {vars_set} variables")
     db.commit()
-    return {"ok": True, "rules_added": added_rules, "profiles_added": added_profiles, "variables_set": vars_set,
+    return {"ok": True, "rules_added": added_rules, "rules_updated": updated_rules,"profiles_added": added_profiles, "variables_set": vars_set,
             "version": sc.version, "incomplete": run.kind != "repair" and not p.get("complete"),
             "warnings": warnings, "profiles_touched": touched}
