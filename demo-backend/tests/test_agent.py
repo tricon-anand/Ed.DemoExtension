@@ -667,3 +667,18 @@ def test_build_accepts_captured_api_json_and_plumbs_it(client, org_a, fake_agent
     r = client.post(f"/agent/scenarios/{sid}/build/stream", json={
         "brief": "x y z", "api_json": [{"url": "x", "body": "not json"}]}, headers=org_a)
     assert r.status_code == 200                                           # a bad body is just not used for structure
+
+
+def test_target_profile_keeps_everything_in_the_presenters_profile():
+    b = agent_mod.Builder(SNAP, target_profile="My Profile")
+    assert b.propose_profile("Invented Persona", {"a": "1"}).startswith("OK")
+    assert b.propose_profile("Another One", {"b": "2"}).startswith("OK")
+    p = b.proposal()
+    assert p["profiles"] == [{"name": "My Profile", "variables": {"a": "1", "b": "2"}}]
+    assert p["target_profile"] == "My Profile"
+
+
+def test_without_target_profile_names_are_kept():
+    b = agent_mod.Builder(SNAP)
+    b.propose_profile("Texas", {"a": "1"})
+    assert [x["name"] for x in b.proposal()["profiles"]] == ["Texas"]

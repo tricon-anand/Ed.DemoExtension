@@ -598,11 +598,10 @@ async function init() {
     }
   };
 
-  $('clear').onclick = async () => {
-    if (!confirm('Remove all rules and profiles?')) return;
-    state = { enabled: false, activeProfile: 'Default', profiles: { Default: {} }, rules: [] };
-    await save();
-    render();
+  // only empties the text box above: it never touches profiles, rules or the server
+  $('clear').onclick = () => {
+    $('io').value = '';
+    $('io').focus();
   };
 }
 
@@ -700,7 +699,7 @@ function initAI() {
       aiMsg('Building API scenario from ' + apiJson.length + ' captured endpoint' + (apiJson.length === 1 ? '' : 's') + '...');
       paint();
       let final = null;
-      await aiStream({ brief, snapshot: [], api_json: apiJson, host: tabHost }, (kind, ev) => {
+      await aiStream({ brief, snapshot: [], api_json: apiJson, host: tabHost, profile: state.activeProfile }, (kind, ev) => {
         if (kind === 'rule') { live.rules.push(ev.rule); paint(); }
         else if (kind === 'profile') { live.profiles.push(ev.profile); paint(); }
         else if (kind === 'tool' && ev.ok === false) { live.notes.push(ev.name + ': ' + ev.output); paint(); }  // the model self-corrects
@@ -745,7 +744,7 @@ function initAI() {
       aiRuns = [];
       $('aiApply').style.display = 'none';
       await load(); render();
-      aiMsg('Applied and synced' + (activeProfile ? ' — active profile: ' + activeProfile : '')
+      aiMsg('Applied and synced' + (activeProfile ? ' to profile "' + activeProfile + '"' : '')
         + '. Reload the page to see it.'
         + (warns.length ? '\nWarnings: ' + warns.join(' ') : ''));
     } catch (e) { aiMsg(e.message, true); } finally { busy(false); }

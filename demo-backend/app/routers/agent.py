@@ -43,6 +43,7 @@ class BuildIn(BaseModel):
     api_json: list[CaptureIn] = Field(default_factory=list, max_length=40)
     research: bool = False
     host: str = Field(default="", max_length=255)
+    profile: str = Field(default="", max_length=120)    # the profile the presenter is in: results stay in it
 
 
 class RepairIn(BaseModel):
@@ -131,7 +132,8 @@ def build(scenario_id: int, body: BuildIn, db: Session = Depends(get_db), user=D
     existing = [r.selector for r in sc.rules]
     return _run(db, user, sc, "build", body.brief,
                 lambda c, rec: agent_mod.run_builder(c, body.brief, snap, existing, body.research,
-                                                     body.host or sc.target_host, api_caps=caps, recorder=rec))
+                                                     body.host or sc.target_host, api_caps=caps, recorder=rec,
+                                                     target_profile=body.profile))
 
 
 # ---------- streaming build: partial results reach the user while the agent is still working ----------
@@ -190,7 +192,7 @@ def build_stream(scenario_id: int, body: BuildIn, db: Session = Depends(get_db),
                 try:
                     proposal, trace = agent_mod.run_builder(
                         client, body.brief, snap, existing, body.research, body.host or sc.target_host,
-                        api_caps=caps, recorder=rec, emit=emit)
+                        api_caps=caps, recorder=rec, emit=emit, target_profile=body.profile)
                 except Exception as e:    # model/network problems must not become a stack trace on the stream
                     persist()
                     wrun.status, wrun.proposal = "failed", {"error": str(e)[:300]}

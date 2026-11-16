@@ -289,8 +289,10 @@ class Builder:
     `emit(kind, payload)` is called the moment something is accepted, so a caller can
     stream partial results instead of waiting for the whole loop to finish."""
 
-    def __init__(self, snapshot, existing_selectors=(), emit=None, api_caps=None):
+    def __init__(self, snapshot, existing_selectors=(), emit=None, api_caps=None, target_profile=""):
         self.emit = emit
+        # the profile the presenter is working in: when set, every proposed variable lands in it (no new personas)
+        self.target_profile = (target_profile or "").strip()
         self.snapshot = snapshot or []
         self.known = {e["selector"] for e in self.snapshot}
         self.existing = set(existing_selectors)
@@ -438,7 +440,11 @@ class Builder:
                     return ("ERROR: variable '" + str(k) + "' holds text that looks like JSON but is not valid: "
                             + str(ex) + ". A list variable must be ONE valid JSON array string - double quotes for"
                             " keys and strings, no trailing commas, for example \"[{\\\"name\\\":\\\"Asha\\\"}]\"")
-        self.profiles[name] = {str(k): str(v) for k, v in variables.items()}
+        if self.target_profile:
+            name = self.target_profile          # never invent a persona: everything goes to the presenter's profile
+        merged = dict(self.profiles.get(name, {})) if self.target_profile else {}
+        merged.update({str(k): str(v) for k, v in variables.items()})
+        self.profiles[name] = merged
         if self.emit is not None:
             self.emit("profile", {"profile": {"name": name, "variables": dict(self.profiles[name])},
                                   "count": len(self.profiles)})
@@ -474,7 +480,7 @@ class Builder:
 
     def proposal(self):
         return {"rules": self.rules, "profiles": [{"name": k, "variables": v} for k, v in self.profiles.items()],
-                "summary": self.summary, "complete": self.finished,
+                "summary": self.summary, "complete": self.finished, "target_profile": self.target_profile,
                 "problems": [] if self.finished else self.problems()}
 
 
@@ -765,12 +771,15 @@ def _api_section(caps):
 
 
 def run_builder(client, brief, snapshot=None, existing_selectors=(), research=False, host="",
-                api_caps=None, recorder=None, emit=None):
-    b = Builder(snapshot, existing_selectors, emit, api_caps)
+                api_caps=None, recorder=None, emit=None, target_profile=""):
+    b = Builder(snapshot, existing_selectors, emit, api_caps, target_profile)
     b.targeted = bool(TARGETED.search(brief or "")) and len(brief or "") < 400
     prompt = f"Brief from the presenter:\n{brief}\n\nTarget host: {host or '(any)'}\n"
+    if b.target_profile:
+        prompt += (f"\nThe presenter is working in the existing profile {b.target_profile!r}. Put EVERY variable in ONE "
+                   f"propose_profile call named exactly {b.target_profile!r}. Do not invent another profile or persona name.\n")
     if b.targeted:
-        prompt += "\nThis is a TARGETED edit: propose only the rule(s) and variable(s) needed for what was asked, nothing else.\n"
+        prompt +="\nThis is a TARGETED edit: propose only the rule(s) and variable(s) needed for what was asked, nothing else.\n"
     if b.api_caps:
         # small free-plan token limits: send fewer captured endpoints (override with AGENT_MAX_ENDPOINTS)
         cap = int(os.getenv("AGENT_MAX_ENDPOINTS") or (16 if provider() == "groq" else 20))
