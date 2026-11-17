@@ -34,9 +34,13 @@
     };
   }
 
+  // Without a login nothing is shown or changed on the page: no rewriting, badge, toolbar, modals or shortcuts.
+  let loggedIn = false;
+
   async function load() {
-    const r = await chrome.storage.local.get(KEY);
-    state = normalize(r[KEY]);
+    const r = await chrome.storage.local.get([KEY, 'auth']);
+    loggedIn = !!(r.auth && r.auth.token);
+    state = normalize(loggedIn ? r[KEY] : null);
   }
 
   function save() {
@@ -434,8 +438,8 @@
     const root = ensureUI();
     const bar = root.getElementById('bar');
     if (!bar) return;
-    bar.style.display = ui.toolbar ? 'flex' : 'none';
-    if (!ui.toolbar) return;
+    bar.style.display = ui.toolbar && loggedIn ? 'flex' : 'none';
+    if (!ui.toolbar || !loggedIn) return;
     const tgl = root.getElementById('tgl');
     tgl.textContent = state.enabled ? 'Demo data' : 'Real data';
     tgl.className = state.enabled ? 'primary' : '';
@@ -1733,6 +1737,10 @@
   // ---------- wiring ----------
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!IS_TOP) return false;       // popup, shortcuts and scans talk to the top frame only
+    if (!loggedIn && msg && msg.type !== 'ping') {
+      sendResponse({ ok: false, error: 'Log in first.' });
+      return false;
+    }
     if (msg && msg.type === 'command') {
       if (msg.name === 'toggle-demo') toggleDemo();
       else if (msg.name === 'next-profile') nextProfile();
@@ -1771,8 +1779,16 @@
       ui = changes.demoUI.newValue || { toolbar: false };
       renderToolbar();
     }
+    if (changes.auth) {
+      // logging in or out: re-read everything; on logout close any open modal and clear the page
+      load().then(() => {
+        if (!loggedIn) { if (varsDlg) closeVars(false); if (rulesDlg) closeRules(); }
+        apply();
+      });
+      return;
+    }
     if (changes[KEY]) {
-      state = normalize(changes[KEY].newValue);
+      state = normalize(loggedIn ? changes[KEY].newValue : null);
       apply();
     }
   });

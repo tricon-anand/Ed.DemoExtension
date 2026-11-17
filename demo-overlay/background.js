@@ -203,8 +203,11 @@ async function handle(msg) {
     case 'status': return status();
     case 'login': return login(msg);
     case 'logout':
-      await store.remove('auth');
+      // also drop the cached scenario (profiles, rules) and the toolbar flag: nothing of the account stays on this computer
+      await store.remove('demo');
+      await store.remove('demoUI');
       await store.remove('server');
+      await store.remove('auth');       // last: pages treat the removal of the login as "log out" and clear themselves
       return { ok: true };
     case 'listScenarios': {
       const r = await call('/scenarios');

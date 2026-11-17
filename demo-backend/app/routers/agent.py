@@ -62,6 +62,27 @@ def _client():
         raise HTTPException(status_code=503, detail=str(e))
 
 
+def merge_api_edits(current: str, proposed: str) -> str:
+    """Merge two api rule values (JSON lists of {"path","value"} edits) by path. An edit in `proposed` replaces
+    the edit with the same path in `current` (keeping its place); edits only in `current` are kept; new paths are
+    appended. Anything that does not parse as such a list falls back to the proposed value as-is."""
+    def parse(text):
+        data = json.loads(text)
+        if not isinstance(data, list) or not all(isinstance(e, dict) and isinstance(e.get("path"), str) for e in data):
+            raise ValueError("not an edit list")
+        return data
+    try:
+        old, new = parse(current), parse(proposed)
+    except (ValueError, TypeError):
+        return proposed
+    by_path = {e["path"].strip(): e for e in new}
+    out = [by_path.pop(e["path"].strip(), e) for e in old]       # replace in place, or keep the old edit
+    out.extend(by_path.values())                                 # paths the old rule did not have
+    if out == old:
+        return current                                           # nothing changed: keep the stored text exactly
+    return json.dumps(out, separators=(",", ":"), ensure_ascii=False)
+
+
 def _need_captures(caps):
     """API mode rewrites the JSON the page loaded, so without captured responses there is nothing to build on."""
     if agent_mod.agent_mode() == "api" and not caps:
@@ -338,9 +359,10 @@ def apply_run(run_id: int, body: ApplyIn | None = None, db: Session = Depends(ge
         for r in p["rules"]:
             current = have.get((r["selector"], r["type"]))
             if current is not None:
-                # the same endpoint again: the new proposal replaces the old value instead of being dropped
-                if current.value != r["value"]:
-                    current.value = r["value"]
+                # the same endpoint again: its edits are merged by path, so an earlier build's edits survive
+                merged = merge_api_edits(current.value, r["value"]) if r["type"] == "api" else r["value"]
+                if current.value != merged:
+                    current.value = merged
                     updated_rules += 1
                 continue
             # host="*" = every URL. An empty host would fall back to the scenario's target host in

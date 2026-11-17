@@ -753,3 +753,42 @@ def test_apply_updates_an_existing_rule_instead_of_dropping_it(client, org_a, fa
     run3 = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "x y z", "api_json": cap}, headers=org_a).json()
     ap3 = client.post(f"/agent/runs/{run3['run_id']}/apply", headers=org_a).json()
     assert ap3["rules_added"] == 0 and ap3["rules_updated"] == 0
+
+
+def test_merge_api_edits_keeps_earlier_edits_and_replaces_same_path():
+    from app.routers.agent import merge_api_edits
+    import json
+    old = '[{"path":"subjectCount","value":"{{a}}"},{"path":"totalCount","value":"{{b}}"}]'
+    # the case seen in real data: a later build only mentions totalCount; subjectCount must survive
+    merged = json.loads(merge_api_edits(old, '[{"path":"totalCount","value":"{{c}}"}]'))
+    assert merged == [{"path": "subjectCount", "value": "{{a}}"}, {"path": "totalCount", "value": "{{c}}"}]
+    # a new path is appended, existing ones keep their place
+    merged = json.loads(merge_api_edits(old, '[{"path":"newKey","value":"1"},{"path":"subjectCount","value":"{{z}}"}]'))
+    assert [e["path"] for e in merged] == ["subjectCount", "totalCount", "newKey"] and merged[0]["value"] == "{{z}}"
+    # identical content: the stored text is returned untouched (so nothing counts as updated)
+    assert merge_api_edits(old, '[{"path":"totalCount","value":"{{b}}"}]') == old
+    # unparsable input falls back to the proposal
+    assert merge_api_edits("not json", '[{"path":"a","value":"1"}]') == '[{"path":"a","value":"1"}]'
+
+
+def test_apply_merges_edits_into_an_existing_rule(client, org_a, fake_agent, monkeypatch):
+    monkeypatch.setenv("AGENT_MODE", "api")
+    cap = [{"url": "http://x.test/api/students", "method": "GET",
+            "body": '{"summary": {"total": 3, "count": 3}}'}]
+    sid = mk(client, org_a)
+
+    def build_apply(value):
+        fake_agent([[tool("propose_rule", selector="*/api/students*", type="api", value=value),
+                     tool("propose_profile", name="P", variables={"n": "5", "m": "6"}),
+                     tool("finish", summary="ok")]])
+        run = client.post(f"/agent/scenarios/{sid}/build", json={"brief": "x y z", "api_json": cap}, headers=org_a).json()
+        return client.post(f"/agent/runs/{run['run_id']}/apply", headers=org_a).json()
+
+    build_apply('[{"path":"summary.total","value":"{{n}}"},{"path":"summary.count","value":"{{m}}"}]')
+    ap = build_apply('[{"path":"summary.total","value":"99"}]')                 # a later build touches only one path
+    assert ap["rules_updated"] == 1
+    rules = client.get(f"/scenarios/{sid}/rules", headers=org_a).json()
+    assert len(rules) == 1
+    import json
+    assert json.loads(rules[0]["value"]) == [{"path": "summary.total", "value": "99"},
+                                             {"path": "summary.count", "value": "{{m}}"}]
