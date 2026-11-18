@@ -166,7 +166,31 @@
     return [u.href, u.pathname + u.search, u.host + u.pathname + u.search].some((f) => re.test(f));
   }
 
-  const api = { urlPatternMatches, prettyName, getAt, setAt, kindOf, columnsFor, cellText, coerce, blankRow, cloneRow, insertAfter, removeAt, friendlySummary };
+  // ---------- empty means off ----------
+  // A variable that is missing or blank in the active profile switches off every rule that needs it: the rule is
+  // skipped and the page shows its real data. (Blank text is not "show nothing": use a hide rule for that.)
+  const isSet = (vars, key) =>
+    !!vars && Object.prototype.hasOwnProperty.call(vars, key) && vars[key] !== null && vars[key] !== undefined &&
+    String(vars[key]).trim() !== '';
+
+  // The server turns {{revenue | currency}} into {{revenue__currency}} (computed per profile). This maps such a
+  // generated name back to the variable the person actually edits.
+  const DERIVED = /^(.+)__(number|currency|percent|date)(_\w+)?$/;
+  const derivedBase = (name) => { const m = DERIVED.exec(String(name)); return m ? m[1] : null; };
+
+  const placeholderNames = (text) => [...String(text == null ? '' : text).matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)].map((m) => m[1]);
+
+  // The variables a rule value still needs but the profile does not have (real names, no duplicates).
+  function unsetNames(text, vars) {
+    const out = [];
+    for (const name of placeholderNames(text)) {
+      const base = derivedBase(name) || name;
+      if (!isSet(vars, base) && !isSet(vars, name) && !out.includes(base)) out.push(base);
+    }
+    return out;
+  }
+
+  const api = { isSet, derivedBase, placeholderNames, unsetNames, urlPatternMatches, prettyName, getAt, setAt, kindOf, columnsFor, cellText, coerce, blankRow, cloneRow, insertAfter, removeAt, friendlySummary };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.DemoVarHelpers = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

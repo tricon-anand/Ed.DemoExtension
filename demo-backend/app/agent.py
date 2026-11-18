@@ -307,6 +307,44 @@ def _path_exists(node, tokens) -> bool:
     return False
 
 
+def _value_at(node, tokens):
+    """(found, value) for an edit path inside a captured response; [*] stands for the first item."""
+    if not tokens:
+        return True, node
+    t, rest = tokens[0], tokens[1:]
+    if t == "*":
+        return _value_at(node[0], rest) if isinstance(node, list) and node else (False, None)
+    if t.isdigit():
+        return _value_at(node[int(t)], rest) if isinstance(node, list) and int(t) < len(node) else (False, None)
+    if isinstance(node, dict) and t in node:
+        return _value_at(node[t], rest)
+    return False, None
+
+
+def _required_keys(original):
+    """The fields every item of a captured list of records has (None when it is not such a list). Injected
+    items must keep them: the app reads ids, versions and flags from the items to build its next requests."""
+    if not (isinstance(original, list) and original and all(isinstance(x, dict) for x in original)):
+        return None
+    keys = set(original[0])
+    for item in original[1:]:
+        keys &= set(item)
+    return keys or None
+
+
+def _list_fields(data, depth=0, prefix=""):
+    """[(path, sorted keys every item has)] for the lists of records in a captured response (two levels deep)."""
+    out = []
+    if isinstance(data, list):
+        keys = _required_keys(data)
+        if keys:
+            out.append((prefix + "[]", sorted(keys)))
+    elif isinstance(data, dict) and depth < 2:
+        for k, v in data.items():
+            out.extend(_list_fields(v, depth + 1, (prefix + "." if prefix else "") + str(k)))
+    return out
+
+
 def _is_numeric(text: str) -> bool:
     return bool(NUMERIC_TEXT.match(text or ""))
 
@@ -428,6 +466,55 @@ class Builder:
                                        "the edit would be ignored. Use a path the sample shows.")
         return out
 
+    def _shape_problems(self):
+        """An injected list of records must keep every field the real items have. Items that leave one out make the
+        app read it as undefined (a course without its version builds the URL .../undefined/sections)."""
+        out = []
+        for r in self.rules:
+            if r["type"] != "api" or not self.api_caps:
+                continue
+            caps = [c for c in self._matching_caps(r["selector"]) if c["data"] is not None]
+            try:
+                edits = json.loads(r["value"])
+            except ValueError:
+                continue
+            for e in edits:
+                p, v = str(e.get("path", "")).strip(), e.get("value")
+                required = None
+                for c in caps:
+                    found, original = _value_at(c["data"], _path_tokens(p))
+                    if found:
+                        required = _required_keys(original)
+                        if required:
+                            break
+                if not required:
+                    continue
+                lists = []                                   # (label, the injected list)
+                if isinstance(v, str):
+                    names = [n for n, _ in _placeholders(v)]
+                    if len(names) == 1 and v.strip() == "{{" + names[0] + "}}":
+                        for pname, vars_ in self.profiles.items():
+                            try:
+                                lists.append((f"variable '{names[0]}' in profile '{pname}'", json.loads(str(vars_.get(names[0], "")))))
+                            except ValueError:
+                                pass
+                    elif v.lstrip()[:1] == "[":
+                        try:
+                            lists.append((f"the list for path '{p}'", json.loads(v)))
+                        except ValueError:
+                            pass
+                elif isinstance(v, list):
+                    lists.append((f"the list for path '{p}'", v))
+                for label, items in lists:
+                    if not isinstance(items, list):
+                        continue
+                    missing = sorted({k for item in items if isinstance(item, dict) for k in required - set(item)})
+                    if missing:
+                        out.append(f"{label} is missing fields every real item has: {', '.join(missing[:12])}"
+                                   f"{', …' if len(missing) > 12 else ''}. Keep ALL the original fields on every item (the page "
+                                   "uses them, for example ids to build its next request); only change their values.")
+        return out
+
     # --- tools ---
     def propose_rule(self, selector="", type="text", value="", reason="", **_):
         selector = (selector or "").strip()
@@ -544,6 +631,7 @@ class Builder:
             out.append("No profiles were proposed.")
         out.extend(proposal_problems(self.rules, self.profiles, self.targeted))
         out.extend(self._path_problems())
+        out.extend(self._shape_problems())
         return out
 
     def proposal(self):
@@ -839,8 +927,12 @@ def _api_section(caps):
             continue
         seen.add(shown)
         count = f", {len(c['data'])} items" if isinstance(c["data"], list) else ""
-        lines.append(f"- selector: *{u.path}*  ({c['method']} {shown}{count})"
-                     + f"\n  sample: {_cap(json.dumps(_shape(c['data']), sort_keys=True, separators=(',', ':'), ensure_ascii=False), 450)}")
+        line = (f"- selector: *{u.path}*  ({c['method']} {shown}{count})"
+                + f"\n  sample: {_cap(json.dumps(_shape(c['data']), sort_keys=True, separators=(',', ':'), ensure_ascii=False), 450)}")
+        for path, keys in _list_fields(c["data"])[:3]:
+            # the sample above is cut short; this line is not: invented items must carry every one of these fields
+            line += f"\n  every item of {path} has: {', '.join(keys[:30])}{', …' if len(keys) > 30 else ''}"
+        lines.append(line)
     return "\n".join(lines)
 
 

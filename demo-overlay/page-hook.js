@@ -137,11 +137,19 @@
       return;
     }
     if (!Object.prototype.hasOwnProperty.call(node, t)) {
-      if (!rest.length && edit.json !== undefined && t !== '__proto__') { node[t] = edit.json; count.n++; }
+      if (!rest.length && edit.json !== undefined && t !== '__proto__') { node[t] = JSON.parse(JSON.stringify(edit.json)); count.n++; }
       return;
     }
     if (rest.length) setAt(node[t], rest, edit, count);
-    else { node[t] = edit.json !== undefined ? edit.json : coerce(node[t], edit.value); count.n++; }
+    else { node[t] = edit.json !== undefined ? injected(edit.json, node[t]) : coerce(node[t], edit.value); count.n++; }
+  }
+
+  // A whole list/object injected over the app's own data: a copy (the app may change what it receives), with the ids,
+  // versions and flags the real items had but the invented ones lack filled in, so the app does not read them as
+  // undefined (e.g. building ".../undefined/sections"). See fillMissing in injectshape.js.
+  function injected(json, original) {
+    const S = globalThis.DemoInjectShape;       // injectshape.js, loaded just before this file
+    try { return S ? S.fillMissing(json, original) : JSON.parse(JSON.stringify(json)); } catch (e) { return json; }
   }
 
   function applyEdits(data, hits) {

@@ -792,3 +792,31 @@ def test_apply_merges_edits_into_an_existing_rule(client, org_a, fake_agent, mon
     import json
     assert json.loads(rules[0]["value"]) == [{"path": "summary.total", "value": "99"},
                                              {"path": "summary.count", "value": "{{m}}"}]
+
+
+COURSES_CAP = capture("https://app.test/cw-api/3/admin/courses?status=1", {"courses": [
+    {"resourceNodeId": 1, "resourceVersion": 1, "resourceName": "Real A", "enrollmentCount": 3, "sections": []},
+    {"resourceNodeId": 2, "resourceVersion": 2, "resourceName": "Real B", "enrollmentCount": 4, "sections": []}]})
+
+
+def test_injected_list_must_keep_every_original_field():
+    """The Courseware bug: invented courses had no resourceVersion, so the app asked .../undefined/sections."""
+    b = agent_mod.Builder([], (), None, [COURSES_CAP])
+    assert b.propose_rule("*/cw-api/3/admin/courses*", "api", '[{"path":"courses","value":"{{courses_json}}"}]').startswith("OK")
+    short = '[{"resourceNodeId":9,"resourceName":"Astronomy","enrollmentCount":5}]'
+    b.propose_profile("P", {"courses_json": short})
+    problems = [x for x in b.problems() if "missing fields" in x]
+    assert problems and "resourceVersion" in problems[0] and "sections" in problems[0]
+    full = '[{"resourceNodeId":9,"resourceVersion":1,"resourceName":"Astronomy","enrollmentCount":5,"sections":[]}]'
+    b.propose_profile("P", {"courses_json": full})
+    assert not [x for x in b.problems() if "missing fields" in x]
+    # a literal list in the edit is checked the same way
+    b2 = agent_mod.Builder([], (), None, [COURSES_CAP])
+    b2.propose_rule("*/cw-api/3/admin/courses*", "api", '[{"path":"courses","value":"[{\\"resourceNodeId\\":9}]"}]')
+    b2.propose_profile("P", {"x": "1"})
+    assert any("resourceVersion" in x for x in b2.problems())
+
+
+def test_prompt_lists_every_field_of_captured_records():
+    section = agent_mod._api_section([agent_mod.Builder([], (), None, [COURSES_CAP]).api_caps[0]])
+    assert "every item of courses[] has:" in section and "resourceVersion" in section and "sections" in section

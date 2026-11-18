@@ -90,3 +90,34 @@ test('urlPatternMatches follows the same rules as the page hook', () => {
   assert.equal(H.urlPatternMatches('', 'GET', u), false);
   assert.equal(H.urlPatternMatches('*/x*', 'GET', 'http://[bad'), false);                 // an unreadable URL never matches
 });
+
+test('empty means off: isSet and unsetNames', () => {
+  assert.equal(H.isSet({ a: 'x' }, 'a'), true);
+  assert.equal(H.isSet({ a: '' }, 'a'), false);
+  assert.equal(H.isSet({ a: '   ' }, 'a'), false);
+  assert.equal(H.isSet({ a: '[]' }, 'a'), true);              // an empty list still means "show no rows"
+  assert.equal(H.isSet({}, 'a'), false);
+  assert.equal(H.isSet({ a: 0 }, 'a'), true);
+  assert.deepEqual(H.unsetNames('{{a}} and {{b}} and {{a}}', { a: 'x' }), ['b']);
+  assert.deepEqual(H.unsetNames('{{a}}', { a: '' }), ['a']);
+  assert.deepEqual(H.unsetNames('plain text', {}), []);
+});
+
+test('generated filter names map back to the variable the person edits', () => {
+  assert.equal(H.derivedBase('revenue__currency'), 'revenue');
+  assert.equal(H.derivedBase('rate__percent_1'), 'rate');
+  assert.equal(H.derivedBase('revenue'), null);
+  assert.equal(H.derivedBase('a__b'), null);                   // not one of the known filters
+  assert.deepEqual(H.unsetNames('{{revenue__currency}}', {}), ['revenue']);
+  assert.deepEqual(H.unsetNames('{{revenue__currency}}', { revenue: '5', revenue__currency: '$5' }), []);
+});
+
+test('the extension scripts contain no control characters (Chrome refuses to load a script with a NUL byte)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const f of ['varhelpers.js', 'injectshape.js', 'content.js', 'page-hook.js', 'background.js', 'popup.js']) {
+    const bytes = fs.readFileSync(path.join(__dirname, '..', f));
+    const bad = [...bytes].filter((c) => c < 32 && c !== 9 && c !== 10 && c !== 13);
+    assert.equal(bad.length, 0, f + ' has control characters');
+  }
+});

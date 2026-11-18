@@ -47,10 +47,19 @@
     return chrome.storage.local.set({ [KEY]: state });
   }
 
+  // Empty means off: a variable that is missing or blank leaves its {{placeholder}} unfilled, and a rule or
+  // edit with an unfilled placeholder is skipped, so the page shows its real data.
+  const VH = globalThis.DemoVarHelpers;   // friendly names, typed cells, row edits, empty-means-off (varhelpers.js)
+  if (!VH) {
+    // varhelpers.js is loaded just before this file by manifest.json; without it nothing here can work
+    console.error('[Demo Overlay] varhelpers.js did not load. Reload the extension at chrome://extensions and check its Errors page.');
+    return;
+  }
+
   function fill(str) {
     const vars = state.profiles[state.activeProfile] || {};
     return String(str == null ? '' : str).replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (m, k) =>
-      Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : m
+      VH.isSet(vars, k) ? vars[k] : m
     );
   }
 
@@ -286,6 +295,8 @@
         .vtable tr:last-child td { border-bottom: 0; }
         .vname { font-size: 13px; font-weight: 600; }
         .vval.vlink { color: #1d4ed8; }
+        .vval.voff { color: #9ca3af; font-style: italic; font-family: inherit; }
+        tr.vunset .vname { color: #9ca3af; font-weight: 500; }
         .vval { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap;
                 word-break: break-all; cursor: pointer; }
         .vval.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
@@ -480,40 +491,43 @@
   let pageCaptures = [];             // the API calls this page made (from the page hook), read when the modal opens
   const addedHere = new Set();       // variables just added: stay visible in "This page" until the modal closes
 
+  // Is this rule in play on the screen the app is showing now? A page-text rule: its element is on the page.
+  // An api rule: the page made a matching call (only calls from this screen: a single-page app keeps earlier ones).
+  function ruleOnThisPage(rule) {
+    if (rule.disabled) return false;
+    if (!hostMatches(rule.host || '') || !pageMatches(rule.page)) return false;
+    if (rule.type === 'api') {
+      const route = location.pathname + location.hash.split('?')[0];
+      return pageCaptures.some((c) => (c.route === undefined || c.route === route) &&
+        VH.urlPatternMatches(rule.selector, c.method, c.url, location.href));
+    }
+    try { return queryAll(rule.selector).length > 0; } catch (e) { return false; }
+  }
+
+  // Names (and the variables behind generated filter names) that rules in play on this screen use.
   function varsUsedHere() {
     const used = new Set();
-    // only calls made on the screen the app is showing now: a single-page app keeps the earlier screens' calls
-    const route = location.pathname + location.hash.split('?')[0];
-    const calls = pageCaptures.filter((c) => c.route === undefined || c.route === route);
     for (const rule of state.rules) {
-      if (rule.disabled) continue;
-      if (!hostMatches(rule.host || '') || !pageMatches(rule.page)) continue;
-      if (rule.type === 'api') {
-        if (!calls.some((c) => VH.urlPatternMatches(rule.selector, c.method, c.url, location.href))) continue;
-      } else {
-        let n = 0;
-        try { n = queryAll(rule.selector).length; } catch (e) { n = 0; }
-        if (!n) continue;
-      }
-      for (const m of String(rule.value || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) if (m[1]) used.add(m[1]);
+      if (!ruleOnThisPage(rule)) continue;
+      for (const name of VH.placeholderNames(rule.value)) { used.add(name); const base = VH.derivedBase(name); if (base) used.add(base); }
     }
     return used;
   }
 
-  function missingVars() {
-    // {{names}} used by rules that apply here but are not defined in the active profile. fill()
-    // leaves unknown placeholders alone, so those rules run with the real data - worth showing.
+  // Variables that rules use but the active profile has not set (missing or blank): those rules are off.
+  function unsetVars(onlyHere) {
     const vars = state.profiles[state.activeProfile] || {};
-    const missing = new Set();
+    const out = [];
     for (const rule of state.rules) {
-      if (rule.disabled) continue;
-      if (!hostMatches(rule.host || '') || !pageMatches(rule.page)) continue;
-      for (const m of String(rule.value || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) {
-        if (m[1] && !hasOwn(vars, m[1])) missing.add(m[1]);
-      }
+      if (rule.disabled || !hostMatches(rule.host || '') || !pageMatches(rule.page)) continue;
+      if (onlyHere && !ruleOnThisPage(rule)) continue;
+      for (const n of VH.unsetNames(rule.value, vars)) if (!out.includes(n)) out.push(n);
     }
-    return [...missing];
+    return out;
   }
+
+  // Generated "revenue__currency" copies are computed by the server: not shown for editing.
+  const isGeneratedVar = (k, vars) => { const base = VH.derivedBase(k); return !!base && Object.prototype.hasOwnProperty.call(vars, base); };
 
   function toggleVars() {
     if (varsDlg) { closeVars(); return; }
@@ -560,7 +574,6 @@
           <button data-s="all" id="vscopeall">All variables</button>
         </div>
         <div class="vhint">Click a value to edit it. Lists open as a table where you can edit cells and add or remove rows. The page previews your changes live; nothing is final until you press Save.</div>
-        <div class="vmiss" id="vmiss" style="display:none"></div>
         <div class="vscroll"><table class="vtable">
           <thead><tr><th style="width:170px">Name</th><th>Value</th><th style="width:26px"></th></tr></thead>
           <tbody id="vrows"></tbody></table></div>
@@ -611,7 +624,7 @@
       window.addEventListener('keydown', varsKeyHandler, true);
       // open on "This page" when something on this page uses a variable, otherwise on "All variables"
       const usedNow = varsUsedHere();
-      varsScope = Object.keys(vars).some((k) => usedNow.has(k)) ? 'page' : 'all';
+      varsScope = Object.keys(vars).some((k) => usedNow.has(k)) || unsetVars(true).length ? 'page' : 'all';
       for (const b of dlg.querySelectorAll('#vscope button')) b.onclick = () => { varsScope = b.dataset.s; refreshVars(); };
       refreshVars();
     } catch (e) {
@@ -691,25 +704,22 @@
   function refreshVars() {
     if (!varsDlg) return;
     const dlg = varsDlg;
-    const missing = missingVars();
-    const miss = dlg.querySelector('#vmiss');
-    if (missing.length) {
-      miss.style.display = paneState ? 'none' : '';      // stay hidden while a variable's own page is open
-      miss.textContent = 'Used by rules but missing in this profile (those rules keep the real data): ' + missing.map(VH.prettyName).join(', ');
-    } else {
-      miss.style.display = 'none';
-    }
     const vars = state.profiles[state.activeProfile] || {};
+    const own = Object.keys(vars).filter((k) => !isGeneratedVar(k, vars));
     const used = varsUsedHere();
-    const here = Object.keys(vars).filter((k) => used.has(k) || addedHere.has(k));
-    dlg.querySelector('#vscopepage').textContent = 'This page (' + here.length + ')';
-    dlg.querySelector('#vscopeall').textContent = 'All variables (' + Object.keys(vars).length + ')';
+    const here = own.filter((k) => used.has(k) || addedHere.has(k));
+    const unsetAll = unsetVars(false).filter((n) => !own.includes(n));
+    const unsetHere = unsetVars(true).filter((n) => !own.includes(n));
+    dlg.querySelector('#vscopepage').textContent = 'This page (' + (here.length + unsetHere.length) + ')';
+    dlg.querySelector('#vscopeall').textContent = 'All variables (' + (own.length + unsetAll.length) + ')';
     dlg.querySelector('#vscopepage').className = varsScope === 'page' ? 'on' : '';
     dlg.querySelector('#vscopeall').className = varsScope === 'all' ? 'on' : '';
     const rows = dlg.querySelector('#vrows');
     rows.replaceChildren();
-    const shown = varsScope === 'page' ? Object.entries(vars).filter(([k]) => here.includes(k)) : Object.entries(vars);
-    for (const [k, v] of shown) {
+    const shownKeys = varsScope === 'page' ? here : own;
+    const shownUnset = varsScope === 'page' ? unsetHere : unsetAll;
+    for (const k of shownKeys) {
+      const v = vars[k];
       const tr = document.createElement('tr');
       const name = document.createElement('td');
       name.className = 'vname';
@@ -724,6 +734,10 @@
         cell.textContent = VH.friendlySummary(parsed); // lists and records open as a table instead of the text editor
         cell.classList.add('vlink');
         cell.onclick = () => togglePane(k);
+      } else if (!VH.isSet(vars, k)) {
+        cell.textContent = 'Off — empty, so rules that use it show the real data';
+        cell.classList.add('voff');
+        cell.onclick = () => editVar(cell, k);
       } else {
         cell.textContent = String(v);
         cell.onclick = () => editVar(cell, k);
@@ -740,12 +754,29 @@
       tr.append(name, val, del);
       rows.appendChild(tr);
     }
-    if (!shown.length) {
+    // used by rules but not set in this profile: those rules are off until a value is given
+    for (const n of shownUnset) {
+      const tr = document.createElement('tr');
+      tr.className = 'vunset';
+      const name = document.createElement('td');
+      name.className = 'vname';
+      name.textContent = VH.prettyName(n);
+      name.title = n;
+      const val = document.createElement('td');
+      const cell = document.createElement('div');
+      cell.className = 'vval voff';
+      cell.textContent = 'Not set — real data shown. Click to set a value.';
+      cell.onclick = () => editVar(cell, n);
+      val.appendChild(cell);
+      tr.append(name, val, document.createElement('td'));
+      rows.appendChild(tr);
+    }
+    if (!shownKeys.length && !shownUnset.length) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.colSpan = 3;
       td.style.cssText = 'color:#6b7280;font-size:12px;padding:10px;';
-      td.textContent = Object.keys(vars).length
+      td.textContent = own.length
         ? 'No variables are used on this page. Switch to "All variables" to see everything in this profile.'
         : 'No variables yet — add one below (for example company = Acme Corp).';
       tr.appendChild(td);
@@ -974,6 +1005,26 @@
       .catch(() => {});
   }
 
+  // How much of a rule is switched off in the active profile because a variable it needs is missing or blank.
+  function ruleOffInfo(rule) {
+    const vars = state.profiles[state.activeProfile] || {};
+    if (rule.type === 'hide') return { off: 0, total: 1, names: [] };
+    if (rule.type !== 'api') {
+      const names = VH.unsetNames(rule.value, vars);
+      return { off: names.length ? 1 : 0, total: 1, names };
+    }
+    let edits;
+    try { edits = JSON.parse(rule.value); } catch (e) { return { off: 0, total: 0, names: [] }; }
+    if (!Array.isArray(edits)) return { off: 0, total: 0, names: [] };
+    let off = 0;
+    const names = [];
+    for (const e of edits) {
+      const missing = VH.unsetNames(e && typeof e.value === 'string' ? e.value : '', vars);
+      if (missing.length) { off++; missing.forEach((n) => { if (!names.includes(n)) names.push(n); }); }
+    }
+    return { off, total: edits.length, names };
+  }
+
   function refreshRules() {
     if (!rulesDlg) return;
     const rows = rulesDlg.querySelector('#rrows');
@@ -1058,8 +1109,19 @@
       // 5. Page Match count
       const tdMatch = document.createElement('td');
       tdMatch.style.textAlign = 'center';
-      if (rule.type === 'api') {
+      const offInfo = rule.disabled ? { off: 0, total: 1, names: [] } : ruleOffInfo(rule);
+      if (offInfo.total && offInfo.off === offInfo.total) {
+        // every part of the rule needs a variable this profile has not set: the rule is off, the real data shows
+        tdMatch.innerHTML = '<span class="roff" style="color:#9ca3af;font-size:11px"></span>';
+        const sp = tdMatch.firstChild;
+        sp.textContent = 'off';
+        sp.title = 'Off in this profile: it needs ' + offInfo.names.map(VH.prettyName).join(', ') + ', which this profile has not set';
+      } else if (rule.type === 'api') {
         tdMatch.innerHTML = '<span style="color:#a21caf;font-size:11px">API</span>';
+        if (offInfo.off) {
+          tdMatch.firstChild.textContent = 'API · ' + offInfo.off + ' off';
+          tdMatch.firstChild.title = offInfo.off + ' of its changes are off in this profile (need ' + offInfo.names.map(VH.prettyName).join(', ') + ')';
+        }
       } else if (rule.disabled) {
         tdMatch.innerHTML = '<span style="color:#9ca3af;font-size:11px">—</span>';
       } else {
@@ -1177,7 +1239,6 @@
   // mode keeps full control. The profile value stays ONE string: raw mode writes back
   // JSON.stringify (compact, one line) so the popup's "name = value" format survives.
   const PANE_ROW_CAP = 50;
-  const VH = globalThis.DemoVarHelpers;   // friendly names, typed cells, row edits (varhelpers.js)
 
   function tryJson(text) {
     const t = String(text == null ? '' : text).trim();
@@ -1194,7 +1255,7 @@
   // Opening a list or record replaces the variable list with its own page inside the modal (Back returns);
   // opening something inside it (a row's own list) is one more page, so nested data is always readable.
   let paneState = null;   // { td, key, root, path, mode } — the page that is open, if any
-  const LIST_SCREEN = '.vhint, #vmiss, .vscroll, .vadd';      // the parts that make up the variable list
+  const LIST_SCREEN = '.vhint, .vscroll, .vadd';      // the parts that make up the variable list
 
   function togglePane(key) { openPane(key); }
 
@@ -1786,10 +1847,11 @@
         if (typeof v === 'string') {
           const whole = v.match(/^\s*\{\{\s*([\w.-]+)\s*\}\}\s*$/);
           if (whole) {
-            if (!hasOwn(vars, whole[1])) continue;   // variable missing: leave the real data alone
+            if (!VH.isSet(vars, whole[1])) continue;   // missing or blank: this edit is off, the real data stays
             v = vars[whole[1]];
           } else {
             v = fill(v);
+            if (/\{\{[^}]*\}\}/.test(v)) continue;     // a placeholder is still unfilled: never inject literal braces
           }
         }
         list.push({ path: ed.path, value: v });
