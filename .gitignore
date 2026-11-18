@@ -3,4 +3,5 @@ backup-before-*/
 *.zip
 Claude outputs/
 CLAUDE.md
+AGENTS.md
 docs/*
