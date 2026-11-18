@@ -19,6 +19,9 @@
   let shadowSeen = false;    // the app has created at least one shadow root
 
   const captures = [];       // last JSON responses the page received (originals), for the popup
+  // The screen the app was on when a call was made (path + hash, no query). Single-page apps change screens
+  // without reloading, so this is how the Variables modal tells which calls belong to the current screen.
+  const routeNow = () => location.pathname + location.hash.split('?')[0];
   let captureSeq = 0;
 
   // ---------- messages from content.js ----------
@@ -33,7 +36,7 @@
       markReady();
       if (shadowSeen) send({ type: 'shadow' });
     } else if (m.type === 'captures') {
-      send({ type: 'reply', reqId: m.reqId, data: captures.map(({ id, method, url, status, size }) => ({ id, method, url, status, size })).reverse() });
+      send({ type: 'reply', reqId: m.reqId, data: captures.map(({ id, method, url, status, size, route }) => ({ id, method, url, status, size, route })).reverse() });
     } else if (m.type === 'capture') {
       const c = captures.find((x) => x.id === m.id);
       send({ type: 'reply', reqId: m.reqId, data: c ? { id: c.id, method: c.method, url: c.url, text: c.text } : null });
@@ -153,9 +156,10 @@
     if (first !== '{' && first !== '[') return;
     let href;
     try { href = new URL(url, location.href).href; } catch (e) { return; }
-    const i = captures.findIndex((c) => c.method === method && c.url === href);
-    if (i >= 0) captures.splice(i, 1);           // a repeated call replaces the older copy
-    captures.push({ id: ++captureSeq, method, url: href, status, size: text.length, text });
+    const route = routeNow();
+    const i = captures.findIndex((c) => c.method === method && c.url === href && c.route === route);
+    if (i >= 0) captures.splice(i, 1);           // a repeated call on the same screen replaces the older copy
+    captures.push({ id: ++captureSeq, method, url: href, status, size: text.length, text, route });
     if (captures.length > MAX_CAPTURES) captures.shift();
   }
 

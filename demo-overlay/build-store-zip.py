@@ -4,7 +4,7 @@ import json, zipfile
 from pathlib import Path
 
 root = Path(__file__).parent
-files = ["manifest.json", "background.js", "content.js", "page-hook.js", "popup.html", "popup.js",
+files = ["manifest.json", "background.js", "content.js", "varhelpers.js", "page-hook.js", "popup.html", "popup.js",
          "icons/icon16.png", "icons/icon32.png", "icons/icon48.png", "icons/icon128.png"]
 version = json.loads((root / "manifest.json").read_text())["version"]
 out = root / f"demo-overlay-store-{version}.zip"

@@ -265,10 +265,14 @@
                background: #1f2937; color: #fff; cursor: pointer; }
         .bar button.primary { background: #2563eb; border-color: #2563eb; }
         .bar b { letter-spacing: .04em; }
-        .vdlg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 660px;
-                max-width: 94vw; max-height: 84vh; display: flex; flex-direction: column; background: #fff;
+        .vdlg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 1100px;
+                max-width: 96vw; min-height: 70vh; max-height: 94vh; display: flex; flex-direction: column; background: #fff;
                 color: #111827; border-radius: 12px; padding: 14px 16px; box-shadow: 0 20px 50px rgba(0,0,0,.35);
                 font-size: 13px; }
+        .vscope { display: inline-flex; gap: 0; margin: 0 0 8px; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; align-self: flex-start; }
+        .vscope button { border: 0; background: #fff; padding: 5px 14px; font-size: 12px; cursor: pointer; color: #374151; }
+        .vscope button.on { background: #111827; color: #fff; }
+        .vscope button + button { border-left: 1px solid #d1d5db; }
         .vhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         .vhead h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
         .vhint { font-size: 11px; color: #6b7280; margin: 3px 0 8px; }
@@ -280,7 +284,8 @@
                      border-bottom: 1px solid #e5e7eb; background: #f9fafb; position: sticky; top: 0; }
         .vtable td { padding: 6px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
         .vtable tr:last-child td { border-bottom: 0; }
-        .vname { font-family: ui-monospace, Consolas, monospace; font-size: 12px; font-weight: 600; }
+        .vname { font-size: 13px; font-weight: 600; }
+        .vval.vlink { color: #1d4ed8; }
         .vval { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap;
                 word-break: break-all; cursor: pointer; }
         .vval.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
@@ -297,7 +302,6 @@
         .vsaveq { font-size: 12px; font-weight: 600; margin: 0 0 8px; }
         .vsavebox input { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #d1d5db;
                           border-radius: 6px; font-size: 12px; }
-        .vpanerow td { background: #f9fafb; padding: 8px 10px; }
         .vpane { font-size: 12px; }
         .vpane .crumb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
         .vpane .crumb button { padding: 2px 8px; font-size: 11px; border-radius: 999px; border: 1px solid #d1d5db;
@@ -308,16 +312,24 @@
         .vmodes button { padding: 2px 10px; font-size: 11px; border-radius: 6px; border: 1px solid #d1d5db;
                          background: #fff; cursor: pointer; }
         .vmodes button.on { background: #111827; color: #fff; border-color: #111827; }
-        .vbody { max-height: 280px; overflow: auto; }
+        .vbody { max-height: calc(90vh - 150px); overflow: auto; }
+        .vdetail { padding-top: 2px; }
+        .vpane .crumb button.vback { background: #f3f4f6; font-weight: 600; margin-right: 6px; }
         .vsub { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; }
         .vsub th { text-align: left; font-size: 11px; color: #6b7280; padding: 4px 8px;
                    border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
-        .vsub td { padding: 4px 8px; border-bottom: 1px solid #f3f4f6; font-family: ui-monospace, Consolas, monospace;
-                   font-size: 11px; vertical-align: top; }
+        .vsub td { padding: 4px 8px; border-bottom: 1px solid #f3f4f6; font-size: 12px; vertical-align: middle; }
+        .vsub.rows th, .vsub.rows td { white-space: nowrap; }
+        .vsub.rows th:first-child, .vsub.rows td:first-child { position: sticky; left: 0; background: #fff; }
+        .vsub.rows th:first-child { background: #f9fafb; }
+        .vsub td.acts { text-align: right; width: 1%; }
+        .vsub td.vfield { color: #374151; font-weight: 600; width: 170px; }
+        .vsubval.empty { color: #9ca3af; font-style: italic; }
+        .vaddrow { display: flex; gap: 6px; margin-top: 8px; }
         .vsub tr:last-child td { border-bottom: 0; }
-        .vsubval { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-block; min-width: 16px; min-height: 14px; word-break: break-all; }
+        .vsubval { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-block; min-width: 24px; min-height: 16px; }
         .vsubval:hover { background: #e0f2fe; color: #0284c7; }
-        .vsubedit { width: 100%; min-width: 60px; padding: 2px 4px; font-family: ui-monospace, Consolas, monospace; font-size: 11px; border: 1px solid #2563eb; border-radius: 4px; outline: none; }
+        .vsubedit { width: 100%; min-width: 60px; padding: 2px 4px; font-size: 12px; border: 1px solid #2563eb; border-radius: 4px; outline: none; }
         .vchip { border: 1px solid #93c5fd; background: #eff6ff; color: #1d4ed8; border-radius: 999px;
                  padding: 1px 8px; font-size: 11px; cursor: pointer; font-family: ui-monospace, Consolas, monospace; }
         .vmore { font-size: 11px; color: #6b7280; margin-top: 4px; }
@@ -461,6 +473,33 @@
   let varsKeyHandler = null;
   let varsDraft = null;   // edits happen on a draft copy of the profile: { name, original, dirty }
 
+  // "This page" shows only the variables that rules for THIS page use: a page-text rule whose element is on
+  // the page right now, or an api rule whose URL pattern matches a call the page has made. "All variables"
+  // shows everything in the profile.
+  let varsScope = 'all';
+  let pageCaptures = [];             // the API calls this page made (from the page hook), read when the modal opens
+  const addedHere = new Set();       // variables just added: stay visible in "This page" until the modal closes
+
+  function varsUsedHere() {
+    const used = new Set();
+    // only calls made on the screen the app is showing now: a single-page app keeps the earlier screens' calls
+    const route = location.pathname + location.hash.split('?')[0];
+    const calls = pageCaptures.filter((c) => c.route === undefined || c.route === route);
+    for (const rule of state.rules) {
+      if (rule.disabled) continue;
+      if (!hostMatches(rule.host || '') || !pageMatches(rule.page)) continue;
+      if (rule.type === 'api') {
+        if (!calls.some((c) => VH.urlPatternMatches(rule.selector, c.method, c.url, location.href))) continue;
+      } else {
+        let n = 0;
+        try { n = queryAll(rule.selector).length; } catch (e) { n = 0; }
+        if (!n) continue;
+      }
+      for (const m of String(rule.value || '').matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g)) if (m[1]) used.add(m[1]);
+    }
+    return used;
+  }
+
   function missingVars() {
     // {{names}} used by rules that apply here but are not defined in the active profile. fill()
     // leaves unknown placeholders alone, so those rules run with the real data - worth showing.
@@ -500,6 +539,8 @@
         state.activeProfile = Object.keys(state.profiles)[0];
       }
       const root = ensureUI();
+      pageCaptures = (await askPage('captures')) || [];
+      addedHere.clear();
       // Edits land on a draft copy so the page can preview them live; nothing is persisted until
       // Save, which asks whether to update the existing profile or to save it as a new one.
       const vars = state.profiles[state.activeProfile] || (state.profiles[state.activeProfile] = {});
@@ -514,10 +555,14 @@
             <button id="vsave" class="primary">Save</button>
             <button id="vclose" title="Close (Esc)">x</button>
           </div></div>
-        <div class="vhint">Click a value to edit it — JSON values open a table view with a raw JSON editor. Enter or clicking away saves to the draft (the page previews it live); nothing is final until you press Save.</div>
+        <div class="vscope" id="vscope">
+          <button data-s="page" id="vscopepage">This page</button>
+          <button data-s="all" id="vscopeall">All variables</button>
+        </div>
+        <div class="vhint">Click a value to edit it. Lists open as a table where you can edit cells and add or remove rows. The page previews your changes live; nothing is final until you press Save.</div>
         <div class="vmiss" id="vmiss" style="display:none"></div>
         <div class="vscroll"><table class="vtable">
-          <thead><tr><th style="width:170px">Variable</th><th>Value</th><th style="width:26px"></th></tr></thead>
+          <thead><tr><th style="width:170px">Name</th><th>Value</th><th style="width:26px"></th></tr></thead>
           <tbody id="vrows"></tbody></table></div>
         <div class="vadd"><input class="k" id="vnewk" placeholder="new_name"><input id="vnewv" placeholder="value">
           <button id="vadd" class="primary">Add</button></div>
@@ -559,11 +604,15 @@
         else {
           const ed = dlg.querySelector('textarea.vedit');
           if (ed) { ed.dataset.cancel = '1'; ed.blur(); }   // first Esc cancels the edit, next closes the pane, then the modal
-          else if (paneState) closePane();
+          else if (paneState) goBack();
           else closeVars(true);
         }
       };
       window.addEventListener('keydown', varsKeyHandler, true);
+      // open on "This page" when something on this page uses a variable, otherwise on "All variables"
+      const usedNow = varsUsedHere();
+      varsScope = Object.keys(vars).some((k) => usedNow.has(k)) ? 'page' : 'all';
+      for (const b of dlg.querySelectorAll('#vscope button')) b.onclick = () => { varsScope = b.dataset.s; refreshVars(); };
       refreshVars();
     } catch (e) {
       console.error('[Demo Overlay] variables table:', e);
@@ -580,7 +629,7 @@
       apply();
     }
     varsDraft = null;
-    closePane();
+    closePane(true);
     varsDlg.remove();
     varsDlg = null;
     if (varsKeyHandler) { window.removeEventListener('keydown', varsKeyHandler, true); varsKeyHandler = null; }
@@ -641,37 +690,45 @@
 
   function refreshVars() {
     if (!varsDlg) return;
-    closePane();                   // a rebuild invalidates the open pane's row
     const dlg = varsDlg;
     const missing = missingVars();
     const miss = dlg.querySelector('#vmiss');
     if (missing.length) {
-      miss.style.display = '';
-      miss.textContent = 'Used by rules but missing in this profile (those rules keep the real data): ' + missing.join(', ');
+      miss.style.display = paneState ? 'none' : '';      // stay hidden while a variable's own page is open
+      miss.textContent = 'Used by rules but missing in this profile (those rules keep the real data): ' + missing.map(VH.prettyName).join(', ');
     } else {
       miss.style.display = 'none';
     }
     const vars = state.profiles[state.activeProfile] || {};
+    const used = varsUsedHere();
+    const here = Object.keys(vars).filter((k) => used.has(k) || addedHere.has(k));
+    dlg.querySelector('#vscopepage').textContent = 'This page (' + here.length + ')';
+    dlg.querySelector('#vscopeall').textContent = 'All variables (' + Object.keys(vars).length + ')';
+    dlg.querySelector('#vscopepage').className = varsScope === 'page' ? 'on' : '';
+    dlg.querySelector('#vscopeall').className = varsScope === 'all' ? 'on' : '';
     const rows = dlg.querySelector('#vrows');
     rows.replaceChildren();
-    for (const [k, v] of Object.entries(vars)) {
+    const shown = varsScope === 'page' ? Object.entries(vars).filter(([k]) => here.includes(k)) : Object.entries(vars);
+    for (const [k, v] of shown) {
       const tr = document.createElement('tr');
       const name = document.createElement('td');
       name.className = 'vname';
-      name.textContent = k;
+      name.textContent = VH.prettyName(k);
+      name.title = k;                                  // the real variable name, on hover
       name.dataset.key = k;
       const val = document.createElement('td');
       const cell = document.createElement('div');
       cell.className = 'vval clamp';
       const parsed = tryJson(v);
       if (parsed) {
-        cell.textContent = jsonSummary(parsed);        // JSON values open the table pane instead of the text editor
+        cell.textContent = VH.friendlySummary(parsed); // lists and records open as a table instead of the text editor
+        cell.classList.add('vlink');
         cell.onclick = () => togglePane(k);
       } else {
         cell.textContent = String(v);
         cell.onclick = () => editVar(cell, k);
       }
-      cell.title = String(v).slice(0, 400);
+      cell.title = parsed ? 'Click to edit' : String(v).slice(0, 400);
       val.appendChild(cell);
       const del = document.createElement('td');
       const x = document.createElement('button');
@@ -683,12 +740,14 @@
       tr.append(name, val, del);
       rows.appendChild(tr);
     }
-    if (!Object.keys(vars).length) {
+    if (!shown.length) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
       td.colSpan = 3;
       td.style.cssText = 'color:#6b7280;font-size:12px;padding:10px;';
-      td.textContent = 'No variables yet — add one below (for example company = Acme Corp).';
+      td.textContent = Object.keys(vars).length
+        ? 'No variables are used on this page. Switch to "All variables" to see everything in this profile.'
+        : 'No variables yet — add one below (for example company = Acme Corp).';
       tr.appendChild(td);
       rows.appendChild(tr);
     }
@@ -726,6 +785,7 @@
     const k = varsDlg.querySelector('#vnewk').value.trim();
     const v = varsDlg.querySelector('#vnewv').value;
     if (!k) { varsDlg.querySelector('#vnewk').focus(); return; }
+    addedHere.add(k);                  // a new variable no rule uses yet would vanish from "This page": keep it visible
     await writeVar(k, v);
     refreshVars();
   }
@@ -1117,29 +1177,12 @@
   // mode keeps full control. The profile value stays ONE string: raw mode writes back
   // JSON.stringify (compact, one line) so the popup's "name = value" format survives.
   const PANE_ROW_CAP = 50;
+  const VH = globalThis.DemoVarHelpers;   // friendly names, typed cells, row edits (varhelpers.js)
 
   function tryJson(text) {
     const t = String(text == null ? '' : text).trim();
     if (!t.startsWith('{') && !t.startsWith('[')) return null;
     try { const v = JSON.parse(t); return v && typeof v === 'object' ? v : null; } catch (e) { return null; }
-  }
-
-  function jsonSummary(v) {
-    if (Array.isArray(v)) {
-      const kinds = new Set(v.map((x) => Array.isArray(x) ? 'array' : x === null ? 'null' : typeof x));
-      let s = v.length + ' item' + (v.length === 1 ? '' : 's');
-      if (kinds.size === 1 && kinds.has('object')) {
-        const keys = [...new Set(v.flatMap((x) => Object.keys(x || {})))];
-        s += ' · keys: ' + keys.slice(0, 6).join(', ') + (keys.length > 6 ? ', …' : '');
-      } else if (kinds.size === 1) {
-        s += ' · ' + [...kinds][0];
-      }
-      return s;
-    }
-    const keys = Object.keys(v);
-    return keys.length
-      ? 'object · ' + keys.length + ' keys: ' + keys.slice(0, 6).join(', ') + (keys.length > 6 ? ', …' : '')
-      : 'object · no keys';
   }
 
   function resolvePath(root, path) {
@@ -1148,32 +1191,43 @@
     return cur;
   }
 
-  let paneState = null;   // { tr, td, key, root, path, mode } — one pane open at a time
+  // Opening a list or record replaces the variable list with its own page inside the modal (Back returns);
+  // opening something inside it (a row's own list) is one more page, so nested data is always readable.
+  let paneState = null;   // { td, key, root, path, mode } — the page that is open, if any
+  const LIST_SCREEN = '.vhint, #vmiss, .vscroll, .vadd';      // the parts that make up the variable list
 
-  function togglePane(key) {
-    if (paneState && paneState.key === key) closePane();
-    else openPane(key);
+  function togglePane(key) { openPane(key); }
+
+  function closePane(skipRefresh) {
+    if (!paneState) return;
+    const dlg = varsDlg;
+    paneState.td.remove();
+    paneState = null;
+    if (dlg && !skipRefresh) {
+      dlg.querySelectorAll(LIST_SCREEN).forEach((el) => { el.style.display = ''; });
+      refreshVars();                                            // summaries, missing-variable note
+    }
   }
 
-  function closePane() {
+  // One step back: raw editor -> table, a nested page -> its parent, the top page -> the variable list.
+  function goBack() {
     if (!paneState) return;
-    paneState.tr.remove();
-    paneState = null;
+    if (paneState.mode === 'raw') paneState.mode = 'table';
+    else if (paneState.path.length) paneState.path = paneState.path.slice(0, -1);
+    else { closePane(); return; }
+    paneState.limit = 0;
+    renderPane();
   }
 
   function openPane(key) {
-    closePane();
+    closePane(true);
     const root = tryJson((state.profiles[state.activeProfile] || {})[key]);
-    if (!root) return;                       // the value changed while the modal was open
-    const nameTd = [...varsDlg.querySelectorAll('.vname')].find((td) => td.dataset.key === key);
-    if (!nameTd) return;
-    const paneTr = document.createElement('tr');
-    paneTr.className = 'vpanerow';
-    const paneTd = document.createElement('td');
-    paneTd.colSpan = 3;
-    paneTr.appendChild(paneTd);
-    nameTd.parentElement.after(paneTr);
-    paneState = { tr: paneTr, td: paneTd, key, root, path: [], mode: 'table' };
+    if (!root || !varsDlg) return;                       // the value changed while the modal was open
+    varsDlg.querySelectorAll(LIST_SCREEN).forEach((el) => { el.style.display = 'none'; });
+    const page = document.createElement('div');
+    page.className = 'vdetail';
+    varsDlg.querySelector('#vsavebox').before(page);
+    paneState = { td: page, key, root, path: [], mode: 'table' };
     renderPane();
   }
 
@@ -1187,11 +1241,19 @@
 
     const crumb = document.createElement('div');
     crumb.className = 'crumb';
+    const back = mk('button', 'vback', '← Back');
+    back.title = 'Back (Esc)';
+    back.onclick = goBack;
+    crumb.appendChild(back);
+    const home = mk('button', null, 'Variables');
+    home.onclick = () => closePane();
+    crumb.appendChild(home);
+    crumb.appendChild(sep());
     let prefix = [];
-    crumb.appendChild(crumbBtn(key, [], prefix.length === path.length));
+    crumb.appendChild(crumbBtn(VH.prettyName(key), [], prefix.length === path.length));
     for (const step of path) {
       prefix = prefix.concat(step);
-      const label = typeof step === 'number' ? '[' + step + ']' : step;
+      const label = typeof step === 'number' ? 'Row ' + (step + 1) : VH.prettyName(step);
       crumb.appendChild(sep());
       crumb.appendChild(crumbBtn(label, prefix.slice(), prefix.length === path.length));
     }
@@ -1204,13 +1266,7 @@
       b.onclick = () => { paneState.mode = m; renderPane(); };
       modes.appendChild(b);
     }
-    const x = document.createElement('button');
-    x.className = 'vdel';
-    x.title = 'Close (Esc)';
-    x.textContent = '✕';
-    x.onclick = closePane;
     crumb.appendChild(modes);
-    crumb.appendChild(x);
     pane.appendChild(crumb);
 
     const body = document.createElement('div');
@@ -1225,7 +1281,7 @@
     const b = document.createElement('button');
     b.textContent = label;
     if (last) b.className = 'last';
-    b.onclick = () => { paneState.path = pathPrefix; paneState.mode = 'table'; renderPane(); };
+    b.onclick = () => { paneState.path = pathPrefix; paneState.mode = 'table'; paneState.limit = 0; renderPane(); };
     return b;
   }
 
@@ -1243,166 +1299,212 @@
     body.appendChild(n);
   }
 
-  function renderJsonTable(body, cur, path) {
-    if (Array.isArray(cur) && cur.length && cur.every((x) => x && typeof x === 'object' && !Array.isArray(x))) {
-      const keys = [...new Set(cur.flatMap((x) => Object.keys(x || {})))];
-      const shownKeys = keys.slice(0, 12);
-      const table = document.createElement('table');
-      table.className = 'vsub';
-      const head = document.createElement('tr');
-      for (const h of ['#'].concat(shownKeys)) {
-        const th = document.createElement('th');
-        th.textContent = h;
-        head.appendChild(th);
-      }
-      table.appendChild(head);
-      cur.slice(0, PANE_ROW_CAP).forEach((item, i) => {
-        const tr = document.createElement('tr');
-        const td0 = document.createElement('td');
-        td0.style.cssText = 'color:#9ca3af;';
-        td0.textContent = i;
-        tr.appendChild(td0);
-        for (const k of shownKeys) {
-          const td = document.createElement('td');
-          renderValue(td, (item || {})[k], path.concat(i, k));
-          tr.appendChild(td);
-        }
-        table.appendChild(tr);
-      });
-      body.appendChild(table);
-      if (cur.length > PANE_ROW_CAP) note(body, 'showing first ' + PANE_ROW_CAP + ' of ' + cur.length + ' items');
-      if (keys.length > 12) note(body, '+' + (keys.length - 12) + ' more keys not shown');
-    } else if (Array.isArray(cur)) {
-      if (!cur.length) { note(body, '(empty list)'); return; }
-      const table = document.createElement('table');
-      table.className = 'vsub';
-      cur.slice(0, PANE_ROW_CAP).forEach((item, i) => {
-        const tr = document.createElement('tr');
-        const td0 = document.createElement('td');
-        td0.style.cssText = 'color:#9ca3af;';
-        td0.textContent = i;
-        const td = document.createElement('td');
-        renderValue(td, item, path.concat(i));
-        tr.append(td0, td);
-        table.appendChild(tr);
-      });
-      body.appendChild(table);
-      if (cur.length > PANE_ROW_CAP) note(body, 'showing first ' + PANE_ROW_CAP + ' of ' + cur.length + ' items');
-    } else if (cur && typeof cur === 'object') {
-      const table = document.createElement('table');
-      table.className = 'vsub';
-      for (const [k, v] of Object.entries(cur)) {
-        const tr = document.createElement('tr');
-        const td0 = document.createElement('td');
-        td0.style.cssText = 'color:#6b7280;font-weight:600;';
-        td0.textContent = k;
-        const td = document.createElement('td');
-        renderValue(td, v, path.concat(k));
-        tr.append(td0, td);
-        table.appendChild(tr);
-      }
-      body.appendChild(table);
-    } else {
-      note(body, 'This is a ' + (cur === null ? 'null' : typeof cur) + ' — edit it in Raw JSON mode.');
+  // ---------- table view of a list / object variable (spreadsheet style) ----------
+
+  // Writes `value` at `path` inside the open variable (an empty path replaces the whole variable).
+  function assignAt(rootVal, path, value) {
+    if (!path.length) return value;
+    let cur = rootVal;
+    for (let i = 0; i < path.length - 1; i++) {
+      const k = path[i];
+      if (cur[k] === null || typeof cur[k] !== 'object') cur[k] = typeof path[i + 1] === 'number' ? [] : {};
+      cur = cur[k];
+    }
+    cur[path[path.length - 1]] = value;
+    return rootVal;
+  }
+
+  // Saves the open variable after any change and refreshes its one-line summary in the main table.
+  async function commitPane() {
+    await writeVar(paneState.key, JSON.stringify(paneState.root));
+    if (!varsDlg) return;                             // the page may have reloaded to refresh API data
+    const nameTd = [...varsDlg.querySelectorAll('.vname')].find((el) => el.dataset.key === paneState.key);
+    const valDiv = nameTd && nameTd.parentElement && nameTd.parentElement.querySelector('.vval');
+    if (valDiv) {
+      valDiv.textContent = VH.friendlySummary(paneState.root);
+      valDiv.title = 'Click to edit';
     }
   }
 
-  function renderValue(td, v, childPath) {
-    if (v && typeof v === 'object') {
-      const chip = document.createElement('button');
-      chip.className = 'vchip';
-      chip.textContent = Array.isArray(v)
-        ? '[' + v.length + (v.length === 1 ? ' item]' : ' items]')
-        : '{' + Object.keys(v).slice(0, 3).join(', ') + (Object.keys(v).length > 3 ? ', …}' : '}');
+  async function changeAt(path, value) {
+    paneState.root = assignAt(paneState.root, path, value);
+    await commitPane();
+  }
+
+  function mk(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  const nestedChipText = (v) => {
+    if (Array.isArray(v) && !v.length) return 'empty';
+    if (Array.isArray(v)) return v.length + (v.every((x) => x === null || typeof x !== 'object') ? (v.length === 1 ? ' value' : ' values') : (v.length === 1 ? ' row' : ' rows'));
+    if (v && typeof v === 'object') return Object.keys(v).length + ' fields';
+    return '—';
+  };
+
+  function renderJsonTable(body, cur, path) {
+    if (Array.isArray(cur) && cur.length && cur.every((x) => x && typeof x === 'object' && !Array.isArray(x))) renderRowsTable(body, cur, path);
+    else if (Array.isArray(cur)) renderValuesTable(body, cur, path);
+    else if (cur && typeof cur === 'object') renderFieldsTable(body, cur, path);
+    else note(body, 'This is a single value — edit it from the main list.');
+  }
+
+  // One cell. `col` = { path, type } says where the value sits inside `item` and how to treat it.
+  function renderCell(td, item, col, rowPath) {
+    const value = VH.getAt(item, col.path);
+    const fullPath = rowPath.concat(col.path);
+    if (col.type === 'nested') {
+      const chip = mk('button', 'vchip', nestedChipText(value));
       chip.title = 'Open';
-      chip.onclick = () => { paneState.path = childPath; paneState.mode = 'table'; renderPane(); };
+      chip.onclick = () => { paneState.path = fullPath; paneState.mode = 'table'; paneState.limit = 0; renderPane(); };
       td.appendChild(chip);
+    } else if (col.type === 'boolean') {
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !!value;
+      box.onchange = async () => { await changeAt(fullPath, box.checked); };
+      td.appendChild(box);
     } else {
-      const cell = document.createElement('div');
-      cell.className = 'vsubval';
-      cell.textContent = v === '' ? '""' : String(v);
+      const text = VH.cellText(value, col.type);
+      const cell = mk('div', 'vsubval' + (text === '' ? ' empty' : ''), text === '' ? 'empty' : text);
       cell.title = 'Click to edit';
-      cell.onclick = (e) => {
-        e.stopPropagation();
-        editSubValue(cell, v, childPath);
-      };
+      cell.onclick = (e) => { e.stopPropagation(); editCell(td, value, col, fullPath); };
       td.appendChild(cell);
     }
   }
 
-  function editSubValue(cell, originalVal, childPath) {
-    const td = cell.parentElement;
+  function editCell(td, value, col, fullPath) {
     const inp = document.createElement('input');
     inp.className = 'vsubedit';
     inp.type = 'text';
-    inp.value = originalVal === null ? 'null' : String(originalVal ?? '');
+    inp.value = VH.cellText(value, col.type);
+    inp.placeholder = col.type === 'list' ? 'a, b, c' : '';
     td.replaceChildren(inp);
     inp.focus();
     inp.select();
-
-    const finish = async (commit) => {
+    const finish = async () => {
       if (!paneState) return;
-      if (!commit || inp.dataset.cancel === '1') {
-        renderPane();
-        return;
-      }
-      const raw = inp.value;
-      if (raw === (originalVal === null ? 'null' : String(originalVal ?? ''))) {
-        renderPane();
-        return;
-      }
-      let parsed;
-      const trimmed = raw.trim();
-      if (typeof originalVal === 'number' && !isNaN(Number(trimmed)) && trimmed !== '') {
-        parsed = Number(trimmed);
-      } else if (typeof originalVal === 'boolean' && (trimmed === 'true' || trimmed === 'false')) {
-        parsed = trimmed === 'true';
-      } else if (originalVal === null && trimmed === 'null') {
-        parsed = null;
-      } else if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-        try { parsed = JSON.parse(trimmed); } catch (e) { parsed = raw; }
-      } else {
-        parsed = raw;
-      }
-
-      let target = paneState.root;
-      for (let i = 0; i < childPath.length - 1; i++) {
-        target = target[childPath[i]];
-      }
-      target[childPath[childPath.length - 1]] = parsed;
-
-      await writeVar(paneState.key, JSON.stringify(paneState.root));
-
-      if (varsDlg) {
-        const nameTd = [...varsDlg.querySelectorAll('.vname')].find((el) => el.dataset.key === paneState.key);
-        if (nameTd && nameTd.parentElement) {
-          const valDiv = nameTd.parentElement.querySelector('.vval');
-          if (valDiv) {
-            valDiv.textContent = jsonSummary(paneState.root);
-            valDiv.title = JSON.stringify(paneState.root).slice(0, 400);
-          }
-        }
-      }
+      if (inp.dataset.cancel === '1' || inp.value === VH.cellText(value, col.type)) { renderPane(); return; }
+      const r = VH.coerce(inp.value, col.type, value);
+      if (!r.ok) { toast(r.error); renderPane(); return; }       // keeps the old value and says why
+      await changeAt(fullPath, r.value);
       renderPane();
     };
-
-    inp.onblur = () => finish(true);
+    inp.onblur = finish;
     inp.onkeydown = (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        inp.blur();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        inp.dataset.cancel = '1';
-        inp.blur();
-      }
+      if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); inp.dataset.cancel = '1'; inp.blur(); }
     };
+  }
+
+  function iconButton(label, title, onclick) {
+    const b = mk('button', 'vdel', label);
+    b.title = title;
+    b.onclick = onclick;
+    return b;
+  }
+
+  function footer(body, addLabel, onAdd, shown, total) {
+    const bar = mk('div', 'vaddrow');
+    const add = mk('button', 'primary', addLabel);
+    add.onclick = onAdd;
+    bar.appendChild(add);
+    if (total > shown) {
+      const more = mk('button', null, 'Show ' + Math.min(PANE_ROW_CAP, total - shown) + ' more (' + shown + ' of ' + total + ')');
+      more.onclick = () => { paneState.limit = shown + PANE_ROW_CAP; renderPane(); };
+      bar.appendChild(more);
+    }
+    body.appendChild(bar);
+  }
+
+  // A list of records: rows and columns, like a spreadsheet.
+  function renderRowsTable(body, rows, path) {
+    const cols = VH.columnsFor(rows, 40);
+    const limit = Math.max(paneState.limit || PANE_ROW_CAP, 1);
+    const table = mk('table', 'vsub rows');
+    const head = document.createElement('tr');
+    for (const c of cols) { const th = mk('th', null, c.label); th.title = c.path.join('.'); head.appendChild(th); }
+    head.appendChild(mk('th', null, ''));
+    table.appendChild(head);
+    rows.slice(0, limit).forEach((item, i) => {
+      const tr = document.createElement('tr');
+      for (const c of cols) { const td = document.createElement('td'); renderCell(td, item, c, path.concat(i)); tr.appendChild(td); }
+      const acts = mk('td', 'acts');
+      acts.append(
+        iconButton('⧉', 'Duplicate this row', async () => {
+          await changeAt(path, VH.insertAfter(rows, i, VH.cloneRow(item)));
+          renderPane();
+        }),
+        iconButton('✕', 'Delete this row', async () => {
+          await changeAt(path, VH.removeAt(rows, i));
+          renderPane();
+        }),
+      );
+      tr.appendChild(acts);
+      table.appendChild(tr);
+    });
+    body.appendChild(table);
+    const hidden = VH.columnsFor(rows).length - cols.length;
+    if (hidden > 0) note(body, '+' + hidden + ' more columns not shown');
+    footer(body, '+ Add row', async () => {
+      const next = VH.insertAfter(rows, rows.length - 1, VH.blankRow(VH.columnsFor(rows)));
+      paneState.limit = Math.max(limit, next.length);
+      await changeAt(path, next);
+      renderPane();
+    }, Math.min(limit, rows.length), rows.length);
+  }
+
+  // A list of plain values (names, numbers).
+  function renderValuesTable(body, list, path) {
+    const first = list.find((x) => x !== null && x !== undefined);
+    const type = typeof first === 'number' ? 'number' : typeof first === 'boolean' ? 'boolean' : 'text';
+    const limit = Math.max(paneState.limit || PANE_ROW_CAP, 1);
+    if (!list.length) note(body, 'This list is empty.');
+    else {
+      const table = mk('table', 'vsub');
+      list.slice(0, limit).forEach((item, i) => {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        renderCell(td, item, { path: [], type }, path.concat(i));
+        const acts = mk('td', 'acts');
+        acts.appendChild(iconButton('✕', 'Delete this value', async () => { await changeAt(path, VH.removeAt(list, i)); renderPane(); }));
+        tr.append(td, acts);
+        table.appendChild(tr);
+      });
+      body.appendChild(table);
+    }
+    footer(body, '+ Add value', async () => {
+      const next = list.concat([type === 'number' ? 0 : type === 'boolean' ? false : '']);
+      paneState.limit = Math.max(limit, next.length);
+      await changeAt(path, next);
+      renderPane();
+    }, Math.min(limit, list.length), list.length);
+  }
+
+  // A single record: field name on the left, value on the right.
+  function renderFieldsTable(body, obj, path) {
+    const table = mk('table', 'vsub');
+    for (const [k, v] of Object.entries(obj)) {
+      const tr = document.createElement('tr');
+      const label = mk('td', 'vfield', VH.prettyName(k));
+      label.title = k;
+      const td = document.createElement('td');
+      const kind = VH.kindOf(v);
+      const type = kind === 'number' || kind === 'boolean' || kind === 'list' ? kind : kind === 'object' || kind === 'nested' ? 'nested' : 'text';
+      renderCell(td, obj, { path: [k], type }, path);
+      tr.append(label, td);
+      table.appendChild(tr);
+    }
+    body.appendChild(table);
   }
 
   function renderRawEditor(body, key) {
     const original = String((state.profiles[state.activeProfile] || {})[key] ?? '');
     const ta = document.createElement('textarea');
-    ta.style.minHeight = '180px';
+    ta.style.minHeight = '320px';
     try { ta.value = JSON.stringify(JSON.parse(original), null, 2); }   // pretty for editing
     catch (e) { ta.value = original; }
     body.appendChild(ta);
@@ -1433,7 +1535,7 @@
       } else closePane();
       refreshVars();
     };
-    cancel.onclick = () => { closePane(); refreshVars(); };
+    cancel.onclick = goBack;
   }
 
   // ---------- page scan (for the AI assistant) and broken-rule check ----------
